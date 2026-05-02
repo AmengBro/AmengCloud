@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WorkDrive</title>
+    <link rel="stylesheet" href="./style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- 登录界面 -->
+    <div class="login-container" id="loginContainer">
+        <div class="login-card">
+            <div class="login-logo">
+                <i class="fa-solid fa-cloud"></i>
+                <h2>WorkDrive</h2>
+            </div>
+            <div class="login-form">
+                <div class="form-group">
+                    <label for="loginUsername">用户名</label>
+                    <input type="text" id="loginUsername" class="form-input" placeholder="请输入用户名">
+                </div>
+                <div class="form-group">
+                    <label for="loginPassword">密码</label>
+                    <input type="password" id="loginPassword" class="form-input" placeholder="请输入密码">
+                </div>
+                <button class="btn btn-primary" id="loginButton">登录</button>
+                <div class="form-switch">
+                    还没有账号？<span class="switch-link" id="goToRegister">去注册</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 注册界面 -->
+    <div class="login-container" id="registerContainer" style="display:none;">
+        <div class="login-card">
+            <div class="login-logo">
+                <i class="fa-solid fa-user-plus"></i>
+                <h2>注册新用户</h2>
+            </div>
+            <div class="login-form">
+                <div class="form-group">
+                    <label for="registerUsername">用户名</label>
+                    <input type="text" id="registerUsername" class="form-input" placeholder="请输入用户名">
+                </div>
+                <div class="form-group">
+                    <label for="registerPassword">密码</label>
+                    <input type="password" id="registerPassword" class="form-input" placeholder="请输入密码（至少6位）">
+                </div>
+                <div class="form-group">
+                    <label for="registerConfirmPassword">确认密码</label>
+                    <input type="password" id="registerConfirmPassword" class="form-input" placeholder="请再次输入密码">
+                </div>
+                <button class="btn btn-primary" id="registerSubmitButton">注册</button>
+                <div class="form-switch">
+                    已有账号？<span class="switch-link" id="goToLogin">去登录</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主应用容器 -->
+    <div class="main-container" id="mainApp" style="display:none;">
+        <!-- 左侧边栏 -->
+        <div class="sidebar card">
+            <div class="logo-area">
+                <h2 style="margin:0; font-size:18px;">WorkDrive</h2>
+            </div>
+
+            <a href="#" class="nav-item active" id="navFiles">
+                <span class="nav-icon"><i class="fa-solid fa-folder"></i></span>
+                <span>云端文件夹</span>
+            </a>
+            <!-- <a href="#" class="nav-item" id="navQueue">
+                <span class="nav-icon"><i class="fa-solid fa-download"></i></span>
+                <span>传输队列</span>
+                <span class="queue-badge" id="queueBadge" style="display:none;">0</span>
+            </a> -->
+            <a href="#" class="nav-item">
+                <span class="nav-icon"><i class="fa-solid fa-users"></i></span>
+                <span>本地存储区</span>
+            </a>
+
+            <div class="sidebar-bottom">
+                <a href="#" class="nav-item" id="webviewLink" data-url="https://amengbro.mysxl.cn/">
+                    <span class="nav-icon"><i class="fa-solid fa-globe"></i></span>
+                    <span>打开网页版</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- 中间内容 -->
+        <div class="content-area">
+            <div class="header-bar card" style="border-bottom-left-radius:0; border-bottom-right-radius:0;">
+                <div style="display:flex; align-items:center; gap:16px;">
+                    <button class="btn" id="backButton" style="display:none;">
+                        <i class="fa-solid fa-arrow-left"></i> 回到上一层目录
+                    </button>
+                    <h3 style="margin:0;" id="headerTitle">云端文件夹</h3>
+                    <div class="path-nav" id="pathNav">
+                        <span class="path-item active" data-id="0">根目录</span>
+                    </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:16px;">
+                    <span id="currentUsername">用户</span>
+                </div>
+            </div>
+
+            <!-- 文件列表区域 -->
+            <div class="card file-view" style="flex:1; display:flex; flex-direction:column; overflow:hidden; border-top-left-radius:0; border-top-right-radius:0;">
+                <div class="toolbar">
+                    <div class="dropdown-container">
+                        <button class="btn btn-primary" id="newButton">
+                            <i class="fa-solid fa-plus"></i> 新建
+                        </button>
+                        <div class="dropdown-menu" id="newMenu">
+                            <button class="dropdown-item" data-type="folder">
+                                <i class="fa-solid fa-folder" style="width:20px;"></i> 文件夹
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="file-list-container">
+                    <div class="file-header">
+                        <div>名称</div>
+                        <div>最后修改</div>
+                    </div>
+                    <div id="fileList"></div>
+                </div>
+            </div>
+
+            <!-- 传输队列区域 -->
+            <div class="card queue-view" style="flex:1; display:flex; flex-direction:column; overflow:hidden; border-top-left-radius:0; border-top-right-radius:0; display:none;">
+                <div class="toolbar">
+                    <h3 style="margin:0; font-size:16px;">传输队列</h3>
+                    <button class="btn btn-secondary" id="clearQueueBtn">
+                        <i class="fa-solid fa-trash"></i> 清空队列
+                    </button>
+                </div>
+
+                <div class="queue-list-container" id="queueList">
+                    <div class="empty-queue" id="emptyQueue">
+                        <i class="fa-solid fa-download" style="font-size:48px; color:var(--text-secondary); margin-bottom:16px;"></i>
+                        <p>暂无下载任务</p>
+                        <p style="font-size:12px; color:var(--text-secondary);">点击文件的下载按钮添加任务</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧边栏 -->
+        <div class="right-bar card">
+            <div class="icon-btn" id="userCenterBtn"><i class="fa-solid fa-circle-info"></i></div>
+            <div style="margin-top:auto; margin-bottom:20px;">
+                <div class="icon-btn" id="themeToggle">
+                    <i class="fa-solid fa-moon" id="themeIcon"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 遮罩窗口 -->
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal" id="modal">
+            <div class="modal-header">
+                <h3 id="modalTitle">新建项目</h3>
+                <button class="modal-close" id="modalClose">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="itemName">名称</label>
+                    <input type="text" id="itemName" class="form-input" placeholder="请输入名称">
+                </div>
+                <div class="form-group" id="fileTypeGroup" style="display:none;">
+                    <label for="fileType">文件类型</label>
+                    <select id="fileType" class="form-select">
+                        <option value=".txt">文本文档 (.txt)</option>
+                        <option value=".doc">Word文档 (.doc)</option>
+                        <option value=".pdf">PDF文档 (.pdf)</option>
+                        <option value=".jpg">图片 (.jpg)</option>
+                        <option value=".png">图片 (.png)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" id="modalCancel">取消</button>
+                <button class="btn btn-primary" id="modalSubmit">创建</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 网络错误提示 -->
+    <div id="networkError" class="network-error" style="display: none;">
+        <div class="network-error-content">
+            <i class="fa-solid fa-wifi-slash" style="font-size: 48px; color: var(--text-secondary); margin-bottom: 24px;"></i>
+            <h2>网络未连接</h2>
+            <p>请检查您的网络连接并重试</p>
+            <button class="btn btn-primary" id="retryButton">重试</button>
+        </div>
+    </div>
+
+    <!-- WebView 容器 -->
+    <div id="webviewContainer" class="webview-container">
+        <div class="webview-header">
+            <div class="webview-title" id="webviewTitle">网页版</div>
+            <div class="webview-controls">
+                <div class="webview-btn" id="webviewBack"><i class="fa-solid fa-arrow-left"></i></div>
+                <div class="webview-btn" id="webviewForward"><i class="fa-solid fa-arrow-right"></i></div>
+                <div class="webview-btn" id="webviewRefresh"><i class="fa-solid fa-rotate-right"></i></div>
+                <div class="webview-btn close-btn" id="webviewClose"><i class="fa-solid fa-xmark"></i></div>
+            </div>
+        </div>
+        <webview id="webview" src="about:blank"></webview>
+    </div>
+
+    <!-- 右键菜单 -->
+    <div id="contextMenu" class="context-menu">
+        <button class="menu-action danger" id="actionDelete">
+            <i class="fa-solid fa-trash" style="width:20px;"></i> 删除
+        </button>
+        <div class="menu-separator"></div>
+        <button class="menu-action">
+            <i class="fa-solid fa-download" style="width:20px;"></i> 下载
+        </button>
+        <button class="menu-action">
+            <i class="fa-solid fa-share" style="width:20px;"></i> 分享
+        </button>
+        <button class="menu-action">
+            <i class="fa-solid fa-info" style="width:20px;"></i> 详情
+        </button>
+    </div>
+
+    <script src="./runner.js"></script>
+</body>
+</html>

@@ -1,0 +1,2070 @@
+﻿let fileDataList = [];
+let currentDirectory = 0; // 当前目录ID，0表示根目录
+let directoryPath = []; // 目录路径历史
+let isNavigating = false; // 防止快速点击导致的重复导航
+let currentUser = null; // 当前用户信息
+
+// 分片存储常量
+const CHUNK_SIZE = 32768; // 32KB（与主进程一致，测试得出Chunks表name字段最大约40KB）
+
+let currentOperateId = -1;
+let loginEventsBound = false;
+let registerEventsBound = false;
+
+console.log('runner.js 开始加载');
+
+// 模态确认对话框
+function showConfirmModal(message) {
+    return new Promise((resolve) => {
+        // 创建模态框覆盖层
+        const modalOverlay = document.createElement('div');
+        modalOverlay.className = 'modal-overlay';
+        modalOverlay.style.display = 'flex';
+        
+        // 创建模态框
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        modal.style.maxWidth = '400px';
+        
+        modal.innerHTML = `
+            <div class="modal-header">
+                <h3>确认操作</h3>
+                <button class="modal-close" id="confirmModalClose">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p>${message}</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" id="confirmModalCancel">取消</button>
+                <button class="btn btn-danger" id="confirmModalSubmit">确认</button>
+            </div>
+        `;
+        
+        modalOverlay.appendChild(modal);
+        document.body.appendChild(modalOverlay);
+        
+        // 添加显示动画
+        setTimeout(() => {
+            modalOverlay.classList.add('active');
+        }, 10);
+        
+        const closeModal = (result) => {
+            modalOverlay.classList.remove('active');
+            setTimeout(() => {
+                document.body.removeChild(modalOverlay);
+                resolve(result);
+            }, 300);
+        };
+        
+        // 绑定事件
+        document.getElementById('confirmModalClose').addEventListener('click', () => closeModal(false));
+        document.getElementById('confirmModalCancel').addEventListener('click', () => closeModal(false));
+        modalOverlay.addEventListener('click', (e) => {
+            if (e.target === modalOverlay) closeModal(false);
+        });
+        document.getElementById('confirmModalSubmit').addEventListener('click', () => closeModal(true));
+    });
+}
+const menu = document.getElementById('contextMenu');
+const themeToggle = document.getElementById('themeToggle');
+const themeIcon = document.getElementById('themeIcon');
+const backButton = document.getElementById('backButton');
+const pathNav = document.getElementById('pathNav');
+
+// 获取当前用户
+async function getCurrentUser() {
+    try {
+        currentUser = await window.electronAPI.getCurrentUser();
+        console.log('当前用户:', currentUser);
+        
+        // 检查用户的owned_file是否为空
+        const ownedFileIds = getUserOwnedFileIds();
+        if (ownedFileIds.length === 0) {
+            console.log('用户的owned_file为空，需要关联所有现有文件');
+            // 获取所有文件
+            try {
+                const response = await window.electronAPI.fetchFiles();
+                if (response && response.data) {
+                    // 提取所有文件ID（包括文件夹）
+                    const allFileIds = response.data.map(item => item.id);
+                    console.log('所有文件ID:', allFileIds);
+                    // 更新用户的owned_file
+                    await updateUserOwnedFiles(allFileIds);
+                    // 更新currentUser的owned_file
+                    currentUser.owned_file = JSON.stringify(allFileIds);
+                }
+            } catch (fileError) {
+                console.error('获取文件列表失败:', fileError);
+            }
+        }
+        
+        return currentUser;
+    } catch (error) {
+        console.error('获取当前用户失败:', error);
+        throw error;
+    }
+}
+
+// 更新用户的文件列表
+async function updateUserOwnedFiles(fileIds) {
+    if (!currentUser || !currentUser.id) {
+        console.error('用户信息无效，无法更新文件列表');
+        return;
+    }
+    try {
+        const ownedFileJson = JSON.stringify(fileIds);
+        await window.electronAPI.updateOwnedFiles(currentUser.id, ownedFileJson);
+        console.log('更新用户文件列表成功');
+        // 同步更新本地currentUser的owned_file
+        currentUser.owned_file = ownedFileJson;
+        console.log('本地用户文件列表已同步更新');
+    } catch (error) {
+        console.error('更新用户文件列表失败:', error);
+    }
+}
+
+// 获取用户拥有的文件ID列表
+function getUserOwnedFileIds() {
+    if (!currentUser || !currentUser.owned_file) {
+        return [];
+    }
+    try {
+        return JSON.parse(currentUser.owned_file);
+    } catch (error) {
+        console.error('解析owned_file失败:', error);
+        return [];
+    }
+}
+
+// 判断是否为Administrator用户
+function isAdministrator() {
+    return currentUser && 
+           ((currentUser.username && currentUser.username.toLowerCase() === 'administrator') ||
+            (currentUser.Username && currentUser.Username.toLowerCase() === 'administrator'));
+}
+
+// 判断是否为超级管理员（uuid=0的用户可以访问所有文件）
+function isSuperAdmin() {
+    return currentUser && 
+           ((currentUser.uuid === 0) || 
+            (currentUser.uuid === '0') ||
+            (currentUser.UUID === 0) ||
+            (currentUser.UUID === '0') ||
+            isAdministrator());
+}
+
+// 将base64字符串分片
+function splitBase64IntoChunks(base64Data) {
+    const chunks = [];
+    let start = 0;
+    const length = base64Data.length;
+    
+    while (start < length) {
+        const end = Math.min(start + CHUNK_SIZE, length);
+        chunks.push(base64Data.substring(start, end));
+        start = end;
+    }
+    
+    return chunks;
+}
+
+// 上传文件分片到数据库（所有文件都在主进程处理分片上传）
+async function uploadFileWithChunks(fileName, base64Data, sha256, floder, filePath, totalChunks, updateProgress) {
+    console.log('开始上传文件:', fileName);
+    console.log('文件大小:', base64Data.length, 'bytes');
+    
+    // 所有文件都在主进程中处理分片上传
+    console.log('使用主进程分片上传');
+    
+    // 调用主进程的大文件上传API（传入进度回调）
+    const result = await window.electronAPI.uploadLargeFile({
+        filePath: filePath,
+        fileName: fileName,
+        sha256: sha256,
+        floder: floder
+    }, totalChunks, updateProgress);
+    
+    console.log('文件上传成功:', result);
+    return result;
+}
+
+// 下载文件（支持分片拼接和旧文件兼容）
+async function downloadFileWithChunks(fileRecord, savePath) {
+    console.log('开始下载文件:', fileRecord.name);
+    console.log('fileRecord.base64:', fileRecord.base64);
+    
+    // 判断存储格式：base64字段是JSON数组（分片存储）还是base64字符串（旧格式）
+    let chunkIds = null;
+    let isChunked = false;
+    
+    if (fileRecord.base64 && fileRecord.base64 !== 'floder' && fileRecord.base64 !== 'folder') {
+        try {
+            // 尝试解析为JSON数组（分片存储格式）
+            const parsed = JSON.parse(fileRecord.base64);
+            if (Array.isArray(parsed)) {
+                chunkIds = parsed;
+                isChunked = true;
+                console.log('识别为分片存储格式，分片数:', chunkIds.length);
+            }
+        } catch (e) {
+            // 不是JSON，说明是旧格式的base64数据
+            console.log('识别为旧格式base64存储');
+        }
+    }
+    
+    if (isChunked && chunkIds) {
+        // 分片存储格式
+        console.log('文件为分片存储格式');
+        
+        try {
+            // 获取所有分片
+            const chunks = [];
+            for (let i = 0; i < chunkIds.length; i++) {
+                console.log('获取分片', i + 1, '/', chunkIds.length, 'ID:', chunkIds[i]);
+                const chunkResult = await window.electronAPI.getChunk(chunkIds[i]);
+                if (chunkResult && chunkResult.data && chunkResult.data.name) {
+                    chunks.push(chunkResult.data.name);
+                } else {
+                    throw new Error('获取分片失败: ' + chunkIds[i]);
+                }
+            }
+            
+            // 拼接所有分片
+            const compressedBase64 = chunks.join('');
+            console.log('拼接完成，压缩后大小:', compressedBase64.length, 'bytes');
+            
+            // 解压数据（上传时使用了gzip压缩）
+            console.log('开始解压数据...');
+            const base64Data = await window.electronAPI.decompressBase64(compressedBase64);
+            console.log('解压完成，原始大小:', base64Data.length, 'bytes');
+            
+            // 解码并保存
+            return saveBase64ToFile(base64Data, savePath);
+        } catch (error) {
+            console.error('分片下载失败:', error);
+            throw error;
+        }
+    } else {
+        // 旧格式：直接存储base64
+        console.log('文件为旧格式存储');
+        if (!fileRecord.base64 || fileRecord.base64 === 'floder' || fileRecord.base64 === 'folder') {
+            throw new Error('文件没有数据或为文件夹');
+        }
+        return saveBase64ToFile(fileRecord.base64, savePath);
+    }
+}
+
+// 将base64数据保存为文件
+function saveBase64ToFile(base64Data, savePath) {
+    // 这部分逻辑需要在主进程中处理
+    // 返回数据供主进程处理
+    return { base64: base64Data, savePath: savePath };
+}
+
+// 刷新Administrator用户的owned_file（获取所有文件ID）
+async function refreshAdministratorOwnedFiles() {
+    try {
+        const response = await window.electronAPI.fetchFiles();
+        if (response && response.data) {
+            const allFileIds = response.data.map(item => item.id);
+            console.log('Administrator更新所有文件ID:', allFileIds);
+            await updateUserOwnedFiles(allFileIds);
+        }
+    } catch (error) {
+        console.error('刷新Administrator文件列表失败:', error);
+    }
+}
+
+// 网络错误提示元素
+const networkError = document.getElementById('networkError');
+const retryButton = document.getElementById('retryButton');
+
+// 检测网络连接
+function checkNetworkConnection() {
+    return navigator.onLine;
+}
+
+// 显示网络错误提示
+function showNetworkError() {
+    networkError.style.display = 'flex';
+}
+
+// 隐藏网络错误提示
+function hideNetworkError() {
+    networkError.style.display = 'none';
+}
+
+// 重新加载应用
+async function reloadApp() {
+    try {
+        hideNetworkError();
+        
+        // 重新获取文件列表
+        await fetchFilesFromDatabase();
+        
+        // 更新路径导航
+        await updatePathNav();
+        
+        showNotification('网络连接已恢复！');
+    } catch (error) {
+        console.error('重新加载应用失败:', error);
+        showNetworkError();
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOMContentLoaded 事件触发');
+    // 检测网络连接
+    if (!checkNetworkConnection()) {
+        showNetworkError();
+        return;
+    }
+    
+    // 显示登录界面
+    showLoginScreen();
+});
+
+// 更新用户名显示
+function updateUsernameDisplay() {
+    const usernameSpan = document.getElementById('currentUsername');
+    if (usernameSpan && currentUser) {
+        const username = currentUser.username || currentUser.Username || '用户';
+        usernameSpan.textContent = username;
+    }
+}
+
+// 退出登录
+function logout() {
+    console.log('logout 函数被调用');
+    currentUser = null;
+    const loginContainer = document.getElementById('loginContainer');
+    const registerContainer = document.getElementById('registerContainer');
+    const mainApp = document.getElementById('mainApp');
+    const loginButton = document.getElementById('loginButton');
+    const registerSubmitButton = document.getElementById('registerSubmitButton');
+    const loginUsernameInput = document.getElementById('loginUsername');
+    const loginPasswordInput = document.getElementById('loginPassword');
+    const registerUsernameInput = document.getElementById('registerUsername');
+    const registerPasswordInput = document.getElementById('registerPassword');
+    const registerConfirmPasswordInput = document.getElementById('registerConfirmPassword');
+    
+    if (loginContainer && registerContainer && mainApp) {
+        mainApp.style.display = 'none';
+        registerContainer.style.display = 'none';
+        loginContainer.style.display = 'flex';
+        
+        // 重置按钮状态
+        if (loginButton) {
+            loginButton.disabled = false;
+            loginButton.textContent = '登录';
+        }
+        if (registerSubmitButton) {
+            registerSubmitButton.disabled = false;
+            registerSubmitButton.textContent = '注册';
+        }
+        
+        // 清空所有输入框
+        loginUsernameInput.value = '';
+        loginPasswordInput.value = '';
+        registerUsernameInput.value = '';
+        registerPasswordInput.value = '';
+        registerConfirmPasswordInput.value = '';
+        
+        showNotification('已退出登录');
+    }
+}
+
+// 初始化主应用（在登录成功后调用）
+async function initMainApp() {
+    try {
+        updateUsernameDisplay();
+        await fetchFilesFromDatabase();
+        setupEvents();
+        initTheme();
+        addEntranceAnimations();
+        setupWebview();
+        setupNewItemModal();
+        setupFileUpload();
+        initTransferQueue();
+        
+        // 绑定用户中心按钮（退出登录）
+        const userCenterBtn = document.getElementById('userCenterBtn');
+        if (userCenterBtn) {
+            userCenterBtn.addEventListener('click', logout);
+        }
+    } catch (error) {
+        console.error('初始化主应用失败:', error);
+        showNotification('初始化失败: ' + error.message, 'error');
+    }
+}
+
+// 切换到登录界面
+function showLogin() {
+    const loginContainer = document.getElementById('loginContainer');
+    const registerContainer = document.getElementById('registerContainer');
+    
+    if (loginContainer && registerContainer) {
+        registerContainer.style.display = 'none';
+        loginContainer.style.display = 'flex';
+    }
+}
+
+// 切换到注册界面
+function showRegister() {
+    const loginContainer = document.getElementById('loginContainer');
+    const registerContainer = document.getElementById('registerContainer');
+    
+    if (loginContainer && registerContainer) {
+        loginContainer.style.display = 'none';
+        registerContainer.style.display = 'flex';
+    }
+}
+
+// 显示登录界面
+async function showLoginScreen() {
+    console.log('showLoginScreen 被调用');
+    const loginContainer = document.getElementById('loginContainer');
+    const mainApp = document.getElementById('mainApp');
+    
+    if (!loginContainer) {
+        console.error('找不到登录容器');
+        return;
+    }
+    
+    // ====== 登录界面元素 ======
+    const loginButton = document.getElementById('loginButton');
+    const loginUsernameInput = document.getElementById('loginUsername');
+    const loginPasswordInput = document.getElementById('loginPassword');
+    const goToRegisterLink = document.getElementById('goToRegister');
+    
+    // ====== 注册界面元素 ======
+    const registerSubmitButton = document.getElementById('registerSubmitButton');
+    const registerUsernameInput = document.getElementById('registerUsername');
+    const registerPasswordInput = document.getElementById('registerPassword');
+    const registerConfirmPasswordInput = document.getElementById('registerConfirmPassword');
+    const goToLoginLink = document.getElementById('goToLogin');
+    
+    // 确保登录按钮可用
+    if (loginButton) {
+        loginButton.disabled = false;
+        loginButton.style.pointerEvents = 'auto';
+        loginButton.style.opacity = '1';
+    }
+
+    // 确保所有输入框可用
+    if (loginUsernameInput) loginUsernameInput.disabled = false;
+    if (loginPasswordInput) loginPasswordInput.disabled = false;
+    if (registerUsernameInput) registerUsernameInput.disabled = false;
+    if (registerPasswordInput) registerPasswordInput.disabled = false;
+    if (registerConfirmPasswordInput) registerConfirmPasswordInput.disabled = false;
+    if (registerSubmitButton) registerSubmitButton.disabled = false;
+
+    // 只绑定一次事件监听器
+    if (!loginEventsBound && loginButton) {
+        loginEventsBound = true;
+        console.log('绑定登录按钮事件');
+        
+        // ====== 登录按钮事件 ======
+        loginButton.addEventListener('click', async (e) => {
+            console.log('登录按钮点击了');
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const username = loginUsernameInput.value.trim();
+            const password = loginPasswordInput.value;
+            
+            if (!username || !password) {
+                showNotification('请输入用户名和密码', 'error');
+                return;
+            }
+            
+            try {
+                loginButton.disabled = true;
+                loginButton.textContent = '登录中...';
+                
+                const user = await window.electronAPI.login(username, password);
+                currentUser = user;
+                
+                showNotification('登录成功！');
+                loginContainer.style.display = 'none';
+                mainApp.style.display = 'flex';
+                initMainApp();
+            } catch (error) {
+                console.error('登录失败:', error);
+                showNotification('登录失败: ' + error.message, 'error');
+                loginButton.disabled = false;
+                loginButton.textContent = '登录';
+                loginUsernameInput.disabled = false;
+                loginPasswordInput.disabled = false;
+            }
+        });
+        
+        // 登录界面回车键登录
+        loginPasswordInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                loginButton.click();
+            }
+        });
+        
+        // ====== 去注册链接 ======
+        goToRegisterLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            showRegister();
+        });
+    }
+    
+    // 只绑定一次注册事件监听器
+    if (!registerEventsBound && registerSubmitButton) {
+        registerEventsBound = true;
+        
+        // ====== 注册按钮事件 ======
+        registerSubmitButton.addEventListener('click', async (e) => {
+            e.preventDefault();
+            
+            const username = registerUsernameInput.value.trim();
+            const password = registerPasswordInput.value;
+            const confirmPassword = registerConfirmPasswordInput.value;
+            
+            if (!username || !password || !confirmPassword) {
+                showNotification('请填写完整信息', 'error');
+                return;
+            }
+            
+            if (password.length < 6) {
+                showNotification('密码长度至少6位', 'error');
+                return;
+            }
+            
+            if (password !== confirmPassword) {
+                showNotification('两次输入的密码不一致', 'error');
+                return;
+            }
+            
+            try {
+                registerSubmitButton.disabled = true;
+                registerSubmitButton.textContent = '注册中...';
+                
+                await window.electronAPI.register(username, password);
+                showNotification('注册成功，请登录！');
+                
+                // 清空注册表单，切换到登录界面
+                registerUsernameInput.value = '';
+                registerPasswordInput.value = '';
+                registerConfirmPasswordInput.value = '';
+                registerSubmitButton.disabled = false;
+                registerSubmitButton.textContent = '注册';
+                
+                // 把注册的用户名填到登录界面
+                loginUsernameInput.value = username;
+                showLogin();
+            } catch (error) {
+                console.error('注册失败:', error);
+                showNotification('注册失败: ' + error.message, 'error');
+                registerSubmitButton.disabled = false;
+                registerSubmitButton.textContent = '注册';
+                registerUsernameInput.disabled = false;
+                registerPasswordInput.disabled = false;
+                registerConfirmPasswordInput.disabled = false;
+            }
+        });
+
+        // 注册界面回车键注册
+        registerConfirmPasswordInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                registerSubmitButton.click();
+            }
+        });
+        
+        // ====== 去登录链接 ======
+        goToLoginLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            showLogin();
+        });
+    }
+}
+
+// 重试按钮点击事件
+retryButton.addEventListener('click', reloadApp);
+
+// 监听网络状态变化
+window.addEventListener('online', function() {
+    hideNetworkError();
+    reloadApp();
+});
+
+window.addEventListener('offline', function() {
+    showNetworkError();
+});
+
+// 从数据库获取文件列表
+async function fetchFilesFromDatabase() {
+    try {
+        // 获取当前用户和用户拥有的文件ID列表
+        if (!currentUser) {
+            await getCurrentUser();
+        }
+        const userOwnedFileIds = getUserOwnedFileIds();
+        console.log('用户拥有的文件ID:', userOwnedFileIds);
+        
+        const response = await window.electronAPI.fetchFiles();
+        console.log('获取文件列表成功:', response);
+        
+        // 处理响应数据
+        if (response && response.data) {
+            console.log('原始数据列表:', response.data);
+            
+            // 转换为前端需要的格式
+            const allItems = response.data.map((item, index) => {
+                // 检查是否为文件夹（数据和校验码都为"floder"）
+                // 同时也兼容"folder"拼写
+                const isFolder = (item.base64 === "floder" && item.sha256 === "floder") || 
+                                 (item.base64 === "folder" && item.sha256 === "folder") ||
+                                 (item.data === "floder" || item.data === "folder");
+                
+                console.log(`项目 ${index}: ID=${item.id}, name=${item.name}, base64=${item.base64}, sha256=${item.sha256}, data=${item.data}, floder=${item.floder}, isFolder=${isFolder}`);
+                
+                // 提取文件扩展名（仅对文件）
+                const ext = !isFolder ? item.name.split('.').pop() : undefined;
+                // 格式化日期
+                const date = new Date().toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
+                
+                return {
+                    id: item.id, // 使用数据库中的实际ID
+                    name: item.name,
+                    type: isFolder ? 'folder' : 'file',
+                    ext: ext,
+                    author: "A萌菌",
+                    date: date,
+                    floder: item.floder || 0 // 存储隶属的文件夹ID
+                };
+            });
+            
+            console.log('转换后的所有项目:', allItems);
+            
+            // 过滤只显示用户拥有的文件（包括文件夹）
+            // 文件夹也视为文件，需要包含在owned_file中
+            // 对于超级管理员（uuid=0或Administrator），显示所有文件
+            let userItems;
+            if (isSuperAdmin()) {
+                userItems = allItems; // 超级管理员可以看到所有文件
+                console.log('超级管理员用户（uuid=0或Administrator），显示所有文件');
+            } else {
+                userItems = allItems.filter(item => userOwnedFileIds.includes(item.id));
+                console.log('普通用户，只显示拥有的文件');
+            }
+            
+            console.log('用户拥有的项目:', userItems);
+            console.log('当前目录:', currentDirectory);
+            
+            // 根据当前目录过滤文件
+            fileDataList = userItems.filter(item => item.floder === currentDirectory);
+            
+            console.log('最终显示的文件列表:', fileDataList);
+        } else {
+            // 如果没有数据，使用默认数据
+            fileDataList = [
+                { id: 1, name: "熊大快跑", type: "folder", author: "A萌菌", date: "3月8日", floder: 0 },
+                { id: 2, name: "Linkboy_setup.exe", type: "file", ext: "exe", author: "A萌菌", date: "3月8日", floder: 0 }
+            ];
+            
+            // 根据当前目录过滤文件
+            fileDataList = fileDataList.filter(item => item.floder === currentDirectory);
+        }
+        
+        // 刷新UI
+        refreshUi();
+    } catch (error) {
+        console.error('获取文件列表失败:', error);
+        // 使用默认数据
+        fileDataList = [
+            { id: 1, name: "熊大快跑", type: "folder", author: "A萌菌", date: "3月8日", floder: 0 },
+            { id: 2, name: "Linkboy_setup.exe", type: "file", ext: "exe", author: "A萌菌", date: "3月8日", floder: 0 }
+        ];
+        
+        // 根据当前目录过滤文件
+        fileDataList = fileDataList.filter(item => item.floder === currentDirectory);
+        
+        refreshUi();
+        showNotification('获取文件列表失败: ' + error.message, 'error');
+    }
+}
+
+function addEntranceAnimations() {
+    const sidebar = document.querySelector('.sidebar');
+    const contentArea = document.querySelector('.content-area');
+    const rightBar = document.querySelector('.right-bar');
+    
+    [sidebar, contentArea, rightBar].forEach((el, i) => {
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(20px)';
+        setTimeout(() => {
+            el.style.transition = 'all 0.5s cubic-bezier(0.4, 0, 0.2, 1)';
+            el.style.opacity = '1';
+            el.style.transform = 'translateY(0)';
+        }, 100 + i * 100);
+    });
+}
+
+function refreshUi() {
+    const container = document.getElementById('fileList');
+    container.innerHTML = "";
+
+    for (let i = 0; i < fileDataList.length; i++) {
+        const data = fileDataList[i];
+        const itemDiv = document.createElement('div');
+        itemDiv.className = 'file-item';
+        itemDiv.dataset.id = data.id;
+        itemDiv.style.opacity = '0';
+        itemDiv.style.transform = 'translateX(-20px)';
+
+        let iconHtml = data.type === 'folder' 
+            ? `<div class="file-icon"><i class="fa-solid fa-folder"></i></div>`
+            : `<div class="file-icon generic"><i class="fa-solid fa-file"></i></div>`;
+
+        itemDiv.innerHTML = `
+            <div class="file-info">
+                ${iconHtml}
+                <div>
+                    <div class="file-name">${data.name}</div>
+                    <div class="file-meta">上传者 ${data.author}</div>
+                </div>
+            </div>
+            <div class="file-actions">
+                <span>${data.date} 由 ${data.author}</span>
+                <div class="menu-btn" onclick="showMenu(event, ${data.id})">
+                    <i class="fa-solid fa-ellipsis"></i>
+                </div>
+            </div>
+        `;
+        
+        // 添加点击事件处理
+        itemDiv.addEventListener('click', async function(e) {
+            // 如果点击的是菜单按钮，不处理
+            if (e.target.closest('.menu-btn')) {
+                return;
+            }
+            
+            // 如果是文件夹，进入该文件夹
+            if (data.type === 'folder' && !isNavigating) {
+                isNavigating = true;
+                try {
+                    directoryPath.push(currentDirectory);
+                    currentDirectory = data.id;
+                    await updatePathNav();
+                    await fetchFilesFromDatabase();
+                } finally {
+                    isNavigating = false;
+                }
+            }
+        });
+        
+        container.appendChild(itemDiv);
+        
+        setTimeout(() => {
+            itemDiv.style.transition = 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+            itemDiv.style.opacity = '1';
+            itemDiv.style.transform = 'translateX(0)';
+        }, 50 + i * 80);
+    }
+}
+
+// 更新路径导航
+async function updatePathNav() {
+    pathNav.innerHTML = "";
+    
+    // 获取所有文件夹信息
+    let allFolders = [];
+    try {
+        const response = await window.electronAPI.fetchFiles();
+        if (response && response.data) {
+            allFolders = response.data.filter(item => 
+                item.base64 === "floder" && item.sha256 === "floder"
+            );
+        }
+    } catch (error) {
+        console.error('获取文件夹信息失败:', error);
+    }
+    
+    // 构建完整路径
+    const pathItems = [{ id: 0, name: '根目录' }];
+    let currentPath = [...directoryPath];
+    currentPath.push(currentDirectory);
+    
+    // 为每个目录添加路径项
+    for (let i = 1; i < currentPath.length; i++) {
+        const folderId = currentPath[i];
+        const folder = allFolders.find(f => f.id === folderId);
+        if (folder) {
+            pathItems.push({ id: folder.id, name: folder.name });
+        }
+    }
+    
+    // 添加路径项到导航栏
+    pathItems.forEach((item, index) => {
+        const pathItem = document.createElement('span');
+        pathItem.className = 'path-item';
+        if (index === pathItems.length - 1) {
+            pathItem.classList.add('active');
+        }
+        pathItem.dataset.id = item.id;
+        pathItem.textContent = item.name;
+        pathItem.addEventListener('click', async function() {
+            // 导航到选中的目录
+            if (isNavigating) return;
+            
+            const targetId = parseInt(this.dataset.id);
+            
+            // 如果点击的就是当前目录，不处理
+            if (targetId === currentDirectory) return;
+            
+            isNavigating = true;
+            try {
+                // 直接设置当前目录，路径导航会根据currentDirectory重建
+                currentDirectory = targetId;
+                directoryPath = []; // 清空路径栈，因为我们是直接跳转
+                
+                await updatePathNav();
+                await fetchFilesFromDatabase();
+            } finally {
+                isNavigating = false;
+            }
+        });
+        pathNav.appendChild(pathItem);
+    });
+    
+    // 显示返回按钮
+    backButton.style.display = currentDirectory === 0 ? 'none' : 'block';
+}
+
+// 回到上一级目录
+async function goBack() {
+    if (directoryPath.length > 0 && !isNavigating) {
+        isNavigating = true;
+        try {
+            currentDirectory = directoryPath.pop();
+            await updatePathNav();
+            await fetchFilesFromDatabase();
+        } finally {
+            isNavigating = false;
+        }
+    }
+}
+
+function showMenu(e, fileId) {
+    e.stopPropagation();
+    currentOperateId = fileId;
+
+    // 获取菜单尺寸
+    const menuWidth = menu.offsetWidth || 180;
+    const menuHeight = menu.offsetHeight || 200;
+
+    // 计算菜单位置，确保不超出屏幕边界
+    let left = e.clientX + 10;
+    let top = e.clientY + 10;
+
+    // 如果菜单会超出右侧边界，向左显示
+    if (left + menuWidth > window.innerWidth) {
+        left = e.clientX - menuWidth - 10;
+    }
+
+    // 如果菜单会超出底部边界，向上显示
+    if (top + menuHeight > window.innerHeight) {
+        top = e.clientY - menuHeight - 10;
+    }
+
+    // 确保菜单不会超出左侧和顶部边界
+    left = Math.max(left, 10);
+    top = Math.max(top, 10);
+
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+    menu.classList.add('visible');
+
+    // 先重置所有菜单项为显示状态
+    menu.querySelectorAll('.menu-action').forEach(item => {
+        item.style.display = 'flex';
+    });
+
+    // 根据文件类型显示/隐藏下载和详情按钮
+    let fileType = '';
+    for (let i = 0; i < fileDataList.length; i++) {
+        if (fileDataList[i].id === fileId) {
+            fileType = fileDataList[i].type;
+            break;
+        }
+    }
+
+    const isFolder = fileType === 'folder';
+    menu.querySelectorAll('.menu-action').forEach(item => {
+        const text = item.textContent || item.innerText;
+        if (text.includes('下载') || text.includes('详情')) {
+            item.style.display = isFolder ? 'none' : 'flex';
+        }
+    });
+}
+
+function hideMenu() {
+    menu.classList.remove('visible');
+    currentOperateId = -1;
+}
+
+function setupEvents() {
+    document.addEventListener('click', hideMenu);
+    
+    // 返回按钮点击事件
+    backButton.addEventListener('click', goBack);
+    
+    // 为HTML中静态的"根目录"span元素添加点击事件
+    const rootPathItem = pathNav.querySelector('[data-id="0"]');
+    if (rootPathItem) {
+        rootPathItem.addEventListener('click', async function() {
+            if (isNavigating) return;
+            if (currentDirectory === 0) return; // 已经在根目录
+            
+            isNavigating = true;
+            try {
+                currentDirectory = 0;
+                directoryPath = [];
+                await updatePathNav();
+                await fetchFilesFromDatabase();
+            } finally {
+                isNavigating = false;
+            }
+        });
+    }
+    
+    document.getElementById('actionDelete').addEventListener('click', async function(e) {
+        e.stopPropagation();
+        if (currentOperateId === -1) return;
+        let fileName = "";
+        let fileType = "";
+        for (let i = 0; i < fileDataList.length; i++) {
+            if (fileDataList[i].id === currentOperateId) {
+                fileName = fileDataList[i].name;
+                fileType = fileDataList[i].type;
+                break;
+            }
+        }
+        if (await showConfirmModal("确定要删除 <strong>" + fileName + "</strong> 吗？")) {
+            try {
+                let deletedIds = [currentOperateId]; // 记录要删除的文件ID
+                
+                if (fileType === 'folder') {
+                    // 如果是文件夹，需要先获取所有子文件
+                    const response = await window.electronAPI.fetchFiles();
+                    if (response && response.data) {
+                        // 查找所有隶属该文件夹的文件
+                        const childFiles = response.data.filter(item => item.floder === currentOperateId);
+                        // 先删除所有子文件
+                        for (const child of childFiles) {
+                            await window.electronAPI.deleteFile(child.name);
+                            deletedIds.push(child.id);
+                        }
+                    }
+                }
+                // 调用删除API删除当前文件或文件夹
+                await window.electronAPI.deleteFile(fileName);
+                
+                // 更新用户的owned_file，移除已删除的文件ID
+                const userOwnedFileIds = getUserOwnedFileIds();
+                const updatedFileIds = userOwnedFileIds.filter(id => !deletedIds.includes(id));
+                await updateUserOwnedFiles(updatedFileIds);
+                
+                // 重新获取文件列表
+                await fetchFilesFromDatabase();
+                
+                // 显示成功消息
+                showNotification('删除成功！');
+            } catch (error) {
+                console.error('删除失败:', error);
+                showNotification('删除失败: ' + error.message, 'error');
+                
+                // 如果API删除失败，至少在本地删除
+                let newList = [];
+                for (let i = 0; i < fileDataList.length; i++) {
+                    if (fileDataList[i].id !== currentOperateId) {
+                        newList.push(fileDataList[i]);
+                    }
+                }
+                fileDataList = newList;
+                refreshUi();
+            }
+        }
+        hideMenu();
+    });
+    
+    // 下载按钮事件
+    document.querySelectorAll('.menu-action').forEach(item => {
+        if (item.textContent.includes('下载')) {
+            item.addEventListener('click', async function(e) {
+                e.stopPropagation();
+                if (currentOperateId === -1) return;
+                
+                let fileName = "";
+                for (let i = 0; i < fileDataList.length; i++) {
+                    if (fileDataList[i].id === currentOperateId) {
+                        fileName = fileDataList[i].name;
+                        break;
+                    }
+                }
+                
+                const modalOverlay = document.getElementById('modalOverlay');
+                const modal = document.getElementById('modal');
+                modalOverlay.classList.add('active');
+                isNewItemModal = false;
+                
+                modal.innerHTML = `
+                    <div class="modal-header">
+                        <h3>下载文件</h3>
+                        <button class="modal-close" id="modalClose">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label for="savePath">保存路径</label>
+                            <div style="display: flex; gap: 8px;">
+                                <input type="text" id="savePath" class="form-input" placeholder="请输入保存路径" style="flex: 1;">
+                                <button class="btn" id="browseButton">浏览</button>
+                            </div>
+                        </div>
+                        <div class="form-group" style="display: flex; align-items: center; gap: 16px;">
+                            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                                <input type="checkbox" id="setAsDefault"> 设置为默认路径
+                            </label>
+                            <!-- <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                                <input type="checkbox" id="useQueueDownload"> 添加到传输队列
+                            </label> -->
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn" id="modalCancel">取消</button>
+                        <button class="btn btn-primary" id="modalSubmit">下载</button>
+                    </div>
+                `;
+                
+                const savedPath = localStorage.getItem('defaultDownloadPath');
+                const defaultPath = (savedPath && savedPath.length >= 3 && /^[a-zA-Z]:[\\\/]/.test(savedPath)) ? savedPath : '';
+                document.getElementById('savePath').value = defaultPath;
+                
+                document.getElementById('browseButton').addEventListener('click', async function() {
+                    const directory = await window.electronAPI.selectDirectory();
+                    if (directory) {
+                        document.getElementById('savePath').value = directory;
+                    }
+                });
+                
+                function closeModal() {
+                    modalOverlay.classList.remove('active');
+                    isNewItemModal = true;
+                }
+                
+                document.getElementById('modalCancel').addEventListener('click', closeModal);
+                document.getElementById('modalClose').addEventListener('click', closeModal);
+                modalOverlay.addEventListener('click', function(e) {
+                    if (e.target === modalOverlay) closeModal();
+                });
+                
+                document.getElementById('modalSubmit').addEventListener('click', async function() {
+                    const savePath = document.getElementById('savePath').value.trim();
+                    if (!savePath || savePath.length < 3) {
+                        showNotification('请输入有效的保存路径', 'error');
+                        return;
+                    }
+                    
+                    // 验证路径格式
+                    if (!/^[a-zA-Z]:[\\\/]?/.test(savePath)) {
+                        showNotification('请输入有效的路径，如 C:\\Downloads', 'error');
+                        return;
+                    }
+                    
+                    if (document.getElementById('setAsDefault').checked) {
+                        localStorage.setItem('defaultDownloadPath', savePath);
+                    }
+                    
+                    const fullPath = savePath.endsWith('\\') || savePath.endsWith('/') ? savePath + fileName : savePath + '\\' + fileName;
+                    
+                    // 直接下载，不使用队列
+                    modal.innerHTML = `
+                            <div class="modal-header">
+                                <h3>下载文件</h3>
+                            </div>
+                            <div class="modal-body" style="text-align: center;">
+                                <div id="downloadStatus" style="margin-bottom: 20px;">正在查找文件...</div>
+                                <div class="progress-bar-container" style="width: 100%; height: 20px; background-color: var(--hover-color); border-radius: 10px; overflow: hidden;">
+                                    <div class="progress-bar" style="width: 0%; height: 100%; background-color: var(--primary-color); transition: width 0.3s ease;"></div>
+                                </div>
+                                <div class="progress-text" style="margin-top: 10px; font-size: 14px; color: var(--text-secondary);">0%</div>
+                            </div>
+                        `;
+                        
+                        const progressBar = modal.querySelector('.progress-bar');
+                        const progressText = modal.querySelector('.progress-text');
+                        const downloadStatus = document.getElementById('downloadStatus');
+                        
+                        function updateProgress(current, total, message) {
+                            const percent = Math.round((current / total) * 100);
+                            progressBar.style.width = percent + '%';
+                            progressText.textContent = percent + '%';
+                            downloadStatus.textContent = message || '下载中... ' + percent + '%';
+                        }
+                        
+                        try {
+                            const result = await window.electronAPI.downloadFile({ fileName, savePath: fullPath }, updateProgress);
+                            updateProgress(100, 100, '下载完成');
+                            setTimeout(() => {
+                                closeModal();
+                                showNotification('文件下载成功！保存路径: ' + result.path);
+                            }, 500);
+                        } catch (error) {
+                            console.error('下载文件失败:', error);
+                            closeModal();
+                            showNotification('下载文件失败: ' + error.message, 'error');
+                        }
+                    });
+                
+                hideMenu();
+            });
+        } else if (item.textContent.includes('详情')) {
+        item.addEventListener('click', async function(e) {
+                e.stopPropagation();
+                if (currentOperateId === -1) return;
+                
+                let fileName = "";
+                let fileType = "";
+                for (let i = 0; i < fileDataList.length; i++) {
+                    if (fileDataList[i].id === currentOperateId) {
+                        fileName = fileDataList[i].name;
+                        fileType = fileDataList[i].type;
+                        break;
+                    }
+                }
+                
+                // 获取文件的详细信息
+                let fileDetails = null;
+                try {
+                    const response = await window.electronAPI.fetchFiles();
+                    if (response && response.data) {
+                        fileDetails = response.data.find(item => item.name === fileName);
+                    }
+                } catch (error) {
+                    console.error('获取文件详情失败:', error);
+                }
+                
+                // 显示详情模态框
+                const modalOverlay = document.getElementById('modalOverlay');
+                const modal = document.getElementById('modal');
+                modalOverlay.classList.add('active');
+                
+                // 修改模态框内容为文件详情
+                modal.innerHTML = `
+                    <div class="modal-header">
+                        <h3>文件详情</h3>
+                        <button class="modal-close" id="modalClose">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label>文件名</label>
+                            <div class="form-input readonly">${fileName}</div>
+                        </div>
+                        <div class="form-group">
+                            <label>类型</label>
+                            <div class="form-input readonly">${fileType === 'folder' ? '文件夹' : '文件'}</div>
+                        </div>
+                        ${fileType !== 'folder' ? `
+                        <div class="form-group">
+                            <label>大小</label>
+                            <div class="form-input readonly">${(() => {
+                                try {
+                                    const chunkIds = fileDetails && fileDetails.base64 ? JSON.parse(fileDetails.base64) : null;
+                                    if (Array.isArray(chunkIds)) {
+                                        const chunkCount = chunkIds.length;
+                                        const sizeInKB = chunkCount * 32;
+                                        return `${chunkCount} 个分片 (${sizeInKB} KB)`;
+                                    }
+                                    return fileDetails && fileDetails.base64 ? Math.round(fileDetails.base64.length * 3 / 4 / 1024) + ' KB' : '未知';
+                                } catch (e) {
+                                    return '未知';
+                                }
+                            })()}</div>
+                        </div>
+                        <div class="form-group">
+                            <label>SHA256</label>
+                            <div class="form-input readonly" style="font-family: monospace; font-size: 12px; word-break: break-all;">${fileDetails ? fileDetails.sha256 : '未知'}</div>
+                        </div>
+                        ` : ''}
+                        <div class="form-group">
+                            <label>上传时间</label>
+                            <div class="form-input readonly">${fileDetails ? new Date(fileDetails.created_at).toLocaleString('zh-CN') : '未知'}</div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-primary" id="modalCloseBtn">关闭</button>
+                    </div>
+                `;
+                
+                // 关闭模态框函数
+                function closeModal() {
+                    modalOverlay.classList.remove('active');
+                }
+                
+                // 关闭按钮事件
+                document.getElementById('modalClose').addEventListener('click', closeModal);
+                document.getElementById('modalCloseBtn').addEventListener('click', closeModal);
+                modalOverlay.addEventListener('click', function(e) {
+                    if (e.target === modalOverlay) closeModal();
+                });
+                
+                hideMenu();
+            });
+        }
+    });
+
+    themeToggle.addEventListener('click', toggleTheme);
+    
+    document.querySelectorAll('.nav-item').forEach(item => {
+        item.addEventListener('click', function(e) {
+            e.preventDefault();
+            document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+            this.classList.add('active');
+        });
+    });
+}
+
+function initTheme() {
+    const saved = localStorage.getItem('theme') || 'light';
+    document.documentElement.setAttribute('data-theme', saved);
+    updateThemeIcon(saved);
+}
+
+function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme');
+    const next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    updateThemeIcon(next);
+    
+    const cards = document.querySelectorAll('.card');
+    cards.forEach((card, i) => {
+        card.style.transition = 'none';
+        setTimeout(() => {
+            card.style.transition = 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+        }, 10);
+    });
+}
+
+function updateThemeIcon(theme) {
+    if (theme === 'dark') {
+        themeIcon.className = 'fa-solid fa-sun';
+    } else {
+        themeIcon.className = 'fa-solid fa-moon';
+    }
+}
+
+function setupWebview() {
+    const webviewLink = document.getElementById('webviewLink');
+    const webviewContainer = document.getElementById('webviewContainer');
+    const webview = document.getElementById('webview');
+    const webviewClose = document.getElementById('webviewClose');
+    const webviewBack = document.getElementById('webviewBack');
+    const webviewForward = document.getElementById('webviewForward');
+    const webviewRefresh = document.getElementById('webviewRefresh');
+    const webviewTitle = document.getElementById('webviewTitle');
+
+    webviewLink.addEventListener('click', function(e) {
+        e.preventDefault();
+        const url = this.getAttribute('data-url');
+        webview.src = url;
+        webviewTitle.textContent = '加载中...';
+        webviewContainer.classList.add('active');
+    });
+
+    webviewClose.addEventListener('click', function() {
+        webviewContainer.classList.remove('active');
+        webview.src = 'about:blank';
+    });
+
+    webviewBack.addEventListener('click', function() {
+        if (webview.canGoBack()) {
+            webview.goBack();
+        }
+    });
+
+    webviewForward.addEventListener('click', function() {
+        if (webview.canGoForward()) {
+            webview.goForward();
+        }
+    });
+
+    webviewRefresh.addEventListener('click', function() {
+        webview.reload();
+    });
+
+    webview.addEventListener('page-title-updated', function(e) {
+        webviewTitle.textContent = e.title || '网页版';
+    });
+}
+
+function setupNewItemModal() {
+    const newButton = document.getElementById('newButton');
+    const newMenu = document.getElementById('newMenu');
+    const modalOverlay = document.getElementById('modalOverlay');
+    const modalTitle = document.getElementById('modalTitle');
+    const fileTypeGroup = document.getElementById('fileTypeGroup');
+    const modalSubmit = document.getElementById('modalSubmit');
+    const modalCancel = document.getElementById('modalCancel');
+    const modalClose = document.getElementById('modalClose');
+    const itemNameInput = document.getElementById('itemName');
+    let currentItemType = '';
+    let isNewItemModal = true;
+
+    // 隐藏新建菜单的函数
+    function hideNewMenu() {
+        newMenu.classList.remove('visible');
+    }
+
+    newButton.addEventListener('click', function(e) {
+        e.stopPropagation();
+        newMenu.classList.toggle('visible');
+    });
+
+    // 点击其他地方关闭新建菜单（与三个点菜单共用同一个全局点击事件）
+    document.addEventListener('click', hideNewMenu);
+
+    // 阻止点击菜单内部时关闭菜单
+    newMenu.addEventListener('click', function(e) {
+        e.stopPropagation();
+    });
+
+    document.querySelectorAll('.dropdown-item').forEach(item => {
+        item.addEventListener('click', function() {
+            currentItemType = this.getAttribute('data-type');
+            if (currentItemType === 'folder') {
+                // 使用独立的新建文件夹模态框，避免与文件详情冲突
+                showCreateFolderModal();
+                newMenu.classList.remove('visible');
+            }
+        });
+    });
+
+    function closeModal() {
+        modalOverlay.classList.remove('active');
+    }
+
+    modalSubmit.addEventListener('click', function() {
+        if (!isNewItemModal) return;
+        const name = itemNameInput.value.trim();
+        if (!name) {
+            alert('请输入名称');
+            return;
+        }
+        
+        addNewItem(currentItemType, name);
+        closeModal();
+    });
+
+    modalCancel.addEventListener('click', closeModal);
+    modalClose.addEventListener('click', closeModal);
+    modalOverlay.addEventListener('click', function(e) {
+        if (e.target === modalOverlay) closeModal();
+    });
+}
+
+function setupFileUpload() {
+    // 添加上传文件按钮到下拉菜单
+    const newMenu = document.getElementById('newMenu');
+    const uploadItem = document.createElement('button');
+    uploadItem.className = 'dropdown-item';
+    uploadItem.innerHTML = '<i class="fa-solid fa-upload" style="width:20px;"></i> 上传文件';
+    uploadItem.addEventListener('click', async function() {
+        try {
+            // 选择文件
+            const filePath = await window.electronAPI.selectFile();
+            if (!filePath) return;
+            
+            // 显示模态框
+            const modalOverlay = document.getElementById('modalOverlay');
+            const modal = document.getElementById('modal');
+            modalOverlay.classList.add('active');
+            
+            // 第一步：显示"正在处理文件"
+            modal.innerHTML = `
+                <div class="modal-header">
+                    <h3>上传文件</h3>
+                </div>
+                <div class="modal-body" style="text-align: center;">
+                    <div style="margin-bottom: 20px;">正在处理文件...</div>
+                </div>
+            `;
+            
+            // 提取文件名
+            const fileName = filePath.split('\\').pop().split('/').pop();
+            
+            // 读取文件并转换为base64
+            const base64 = await window.electronAPI.readFileAsBase64(filePath);
+            
+            // 计算SHA256值
+            const sha256 = await window.electronAPI.calculateSHA256(filePath);
+            
+            // 从主进程获取准确的分片数量（考虑gzip压缩后的大小）
+            const chunkResult = await window.electronAPI.getTotalChunks(filePath);
+            const totalChunks = chunkResult.success ? chunkResult.totalChunks : Math.ceil(base64.length / CHUNK_SIZE);
+            
+            // 第二步：显示分片数量和上传按钮
+            modal.innerHTML = `
+                <div class="modal-header">
+                    <h3>上传文件</h3>
+                </div>
+                <div class="modal-body" style="text-align: center;">
+                    <div style="margin-bottom: 20px;">将会上传${totalChunks}个分片</div>
+                    <div style="margin-bottom: 20px; font-size: 14px; color: var(--text-secondary);">按下上传键继续</div>
+                    <button class="btn btn-primary" id="startUploadBtn">上传</button>
+                </div>
+            `;
+            
+            // 等待用户点击上传按钮
+            await new Promise((resolve) => {
+                document.getElementById('startUploadBtn').addEventListener('click', resolve);
+            });
+            
+            // 第三步：显示实际进度
+            modal.innerHTML = `
+                <div class="modal-header">
+                    <h3>上传文件</h3>
+                </div>
+                <div class="modal-body" style="text-align: center;">
+                    <div id="uploadStatus" style="margin-bottom: 20px;">正在上传第 1/${totalChunks} 个分片</div>
+                    <div class="progress-bar-container" style="width: 100%; height: 20px; background-color: var(--hover-color); border-radius: 10px; overflow: hidden;">
+                        <div class="progress-bar" style="width: 0%; height: 100%; background-color: var(--primary-color); transition: width 0.3s ease;"></div>
+                    </div>
+                    <div class="progress-text" style="margin-top: 10px; font-size: 14px; color: var(--text-secondary);">0%</div>
+                </div>
+            `;
+            
+            const progressBar = modal.querySelector('.progress-bar');
+            const progressText = modal.querySelector('.progress-text');
+            const uploadStatus = document.getElementById('uploadStatus');
+            
+            // 更新进度的函数
+            function updateProgress(current, total, message) {
+                const percent = Math.round((current / total) * 10000) / 100;
+                progressBar.style.width = percent + '%';
+                progressText.textContent = percent + '%';
+                uploadStatus.textContent = message || `正在上传第 ${current}/${total} 个分片`;
+            }
+            
+            // 开始上传
+            try {
+                const result = await uploadFileWithChunks(fileName, base64, sha256, currentDirectory, filePath, totalChunks, updateProgress);
+                
+                // 上传完成后，将进度设置为100%
+                updateProgress(totalChunks, totalChunks);
+                
+                // 获取新文件的ID并更新用户的owned_file
+                if (result && result.id) {
+                    const newFileId = result.id;
+                    const userOwnedFileIds = getUserOwnedFileIds();
+                    userOwnedFileIds.push(newFileId);
+                    await updateUserOwnedFiles(userOwnedFileIds);
+                    
+                    // 如果是Administrator，实时更新owned_file确保对所有文件的访问
+                    if (isAdministrator()) {
+                        await refreshAdministratorOwnedFiles();
+                    }
+                }
+                
+                // 延迟关闭，让用户看到完成状态
+                setTimeout(() => {
+                    modalOverlay.classList.remove('active');
+                    
+                    // 重新获取文件列表
+                    fetchFilesFromDatabase();
+                    
+                    // 显示成功消息
+                    showNotification('文件上传成功！');
+                }, 500);
+            } catch (uploadError) {
+                console.error('上传文件失败:', uploadError);
+                modalOverlay.classList.remove('active');
+                showNotification('上传文件失败: ' + uploadError.message, 'error');
+            }
+        } catch (error) {
+            console.error('处理文件失败:', error);
+            document.getElementById('modalOverlay').classList.remove('active');
+            showNotification('处理文件失败: ' + error.message, 'error');
+        }
+    });
+    
+    // 插入到下拉菜单的末尾
+    newMenu.appendChild(uploadItem);
+}
+
+// 显示通知
+function showNotification(message, type = 'success') {
+    // 创建通知元素
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 16px 24px;
+        border-radius: 8px;
+        color: white;
+        font-size: 14px;
+        font-weight: 500;
+        z-index: 1000;
+        transform: translateX(100%);
+        transition: transform 0.3s ease;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    `;
+    
+    // 设置背景色
+    if (type === 'success') {
+        notification.style.backgroundColor = '#4CAF50';
+    } else if (type === 'error') {
+        notification.style.backgroundColor = '#f44336';
+    }
+    
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    
+    // 显示通知
+    setTimeout(() => {
+        notification.style.transform = 'translateX(0)';
+    }, 100);
+    
+    // 3秒后隐藏通知
+    setTimeout(() => {
+        notification.style.transform = 'translateX(100%)';
+        setTimeout(() => {
+            document.body.removeChild(notification);
+        }, 300);
+    }, 3000);
+}
+
+// ==================== 传输队列功能 ====================
+
+// 下载队列数组
+let downloadQueue = [];
+let isDownloading = false;
+let currentDownloadTask = null;
+
+// 初始化传输队列
+function initTransferQueue() {
+    // 导航切换
+    const navFiles = document.getElementById('navFiles');
+    const navQueue = document.getElementById('navQueue');
+    const clearQueueBtn = document.getElementById('clearQueueBtn');
+    const queueList = document.getElementById('queueList');
+
+    if (navFiles) {
+        navFiles.addEventListener('click', () => {
+            showView('files');
+        });
+    }
+
+    if (navQueue) {
+        navQueue.addEventListener('click', () => {
+            showView('queue');
+        });
+    }
+
+    if (clearQueueBtn) {
+        clearQueueBtn.addEventListener('click', () => {
+            clearDownloadQueue();
+        });
+    }
+
+    if (queueList) {
+        queueList.addEventListener('click', (e) => {
+            const target = e.target;
+            const btn = target.closest('button');
+
+            if (!btn) return;
+
+            const index = parseInt(btn.dataset.index);
+            if (isNaN(index)) return;
+
+            if (btn.classList.contains('queue-btn-remove')) {
+                removeFromQueue(index);
+            } else if (btn.classList.contains('queue-btn-stop')) {
+                stopDownload(index);
+            } else if (btn.classList.contains('queue-btn-retry')) {
+                retryDownload(index);
+            }
+        });
+    }
+}
+
+// 显示指定视图
+function showView(view) {
+    const fileView = document.querySelector('.file-view');
+    const queueView = document.querySelector('.queue-view');
+    const navFiles = document.getElementById('navFiles');
+    const navQueue = document.getElementById('navQueue');
+    const headerTitle = document.getElementById('headerTitle');
+    const pathNav = document.getElementById('pathNav');
+    
+    if (view === 'files') {
+        fileView.style.display = 'flex';
+        queueView.style.display = 'none';
+        navFiles.classList.add('active');
+        navQueue.classList.remove('active');
+        headerTitle.textContent = '云端文件夹';
+        pathNav.style.display = 'flex';
+    } else if (view === 'queue') {
+        fileView.style.display = 'none';
+        queueView.style.display = 'flex';
+        navFiles.classList.remove('active');
+        navQueue.classList.add('active');
+        headerTitle.textContent = '传输队列';
+        pathNav.style.display = 'none';
+    }
+}
+
+// 添加文件到下载队列
+function addToDownloadQueue(fileName) {
+    console.log('addToDownloadQueue called with fileName:', fileName);
+    // 检查是否已在队列中
+    const exists = downloadQueue.find(item => item.fileName === fileName);
+    if (exists) {
+        showNotification('文件已在队列中', 'error');
+        return;
+    }
+    
+    // 获取文件保存路径
+    const savedPath = localStorage.getItem('defaultDownloadPath');
+    let defaultPath = 'C:\\Users\\Public\\Downloads';
+    if (savedPath && savedPath.length >= 3 && /^[a-zA-Z]:[\\\/]/.test(savedPath)) {
+        defaultPath = savedPath;
+    }
+    const savePath = defaultPath.endsWith('\\') || defaultPath.endsWith('/') 
+        ? defaultPath + fileName 
+        : defaultPath + '\\' + fileName;
+    
+    // 添加到队列
+    const task = {
+        id: Date.now(),
+        fileName: fileName,
+        savePath: savePath,
+        status: 'pending', // pending, downloading, completed, error
+        progress: 0,
+        progressText: '等待下载',
+        chunkInfo: ''
+    };
+    
+    downloadQueue.push(task);
+    updateQueueUI();
+    startDownloadQueue();
+}
+
+// 开始下载队列
+async function startDownloadQueue() {
+    // 强制重置 isDownloading 状态，确保不会被卡住
+    const pendingTasks = downloadQueue.filter(item => item.status === 'pending');
+    const downloadingTasks = downloadQueue.filter(item => item.status === 'downloading');
+    
+    // 如果有等待的任务但没有正在下载的任务，重置 isDownloading
+    if (pendingTasks.length > 0 && downloadingTasks.length === 0) {
+        isDownloading = false;
+    }
+    
+    if (isDownloading || downloadQueue.length === 0) {
+        return;
+    }
+    
+    // 找到第一个待下载的任务
+    const taskIndex = downloadQueue.findIndex(item => item.status === 'pending');
+    if (taskIndex === -1) {
+        return;
+    }
+    
+    isDownloading = true;
+    currentDownloadTask = downloadQueue[taskIndex];
+    currentDownloadTask.status = 'downloading';
+    updateQueueUI();
+    
+    try {
+        // 下载文件（传入进度回调）
+        const result = await window.electronAPI.downloadFile(
+            { fileName: currentDownloadTask.fileName, savePath: currentDownloadTask.savePath },
+            (current, total, message) => {
+                updateTaskProgress(taskIndex, current, total, message);
+            }
+        );
+        
+        if (result.success) {
+            downloadQueue[taskIndex].status = 'completed';
+            downloadQueue[taskIndex].progress = 100;
+            downloadQueue[taskIndex].progressText = '下载完成';
+            showNotification(`${currentDownloadTask.fileName} 下载完成`, 'success');
+        } else {
+            throw new Error('下载失败');
+        }
+    } catch (error) {
+        downloadQueue[taskIndex].status = 'error';
+        downloadQueue[taskIndex].progressText = '下载失败';
+        showNotification(`${currentDownloadTask.fileName} 下载失败: ${error.message}`, 'error');
+    } finally {
+        isDownloading = false;
+        console.log('isDownloading set to false in startDownloadQueue finally');
+        currentDownloadTask = null;
+        updateQueueUI();
+        // 继续下一个任务
+        setTimeout(startDownloadQueue, 500);
+    }
+}
+
+// 更新任务进度
+function updateTaskProgress(taskIndex, current, total, message) {
+    const task = downloadQueue[taskIndex];
+    if (!task || task.status !== 'downloading') return;
+    
+    const percent = Math.round((current / total) * 100);
+    task.progress = percent;
+    
+    if (message) {
+        // 提取分片信息
+        const chunkMatch = message.match(/正在下载第 (\d+)\/(\d+) 个分片/);
+        if (chunkMatch) {
+            task.chunkInfo = `第 ${chunkMatch[1]}/${chunkMatch[2]} 个分片`;
+            task.progressText = message;
+        } else {
+            task.chunkInfo = '';
+            task.progressText = message;
+        }
+    } else {
+        task.progressText = `下载中 ${percent}%`;
+    }
+    
+    updateQueueUI();
+}
+
+// 更新队列UI
+function updateQueueUI() {
+    const queueList = document.getElementById('queueList');
+    const queueBadge = document.getElementById('queueBadge');
+    const emptyQueue = document.getElementById('emptyQueue');
+    
+    // 更新徽章
+    const pendingCount = downloadQueue.filter(item => item.status === 'pending').length;
+    const downloadingCount = downloadQueue.filter(item => item.status === 'downloading').length;
+    const totalCount = pendingCount + downloadingCount;
+    
+    if (totalCount > 0) {
+        queueBadge.textContent = totalCount;
+        queueBadge.style.display = 'inline';
+    } else {
+        queueBadge.style.display = 'none';
+    }
+    
+    // 更新队列列表
+    if (downloadQueue.length === 0) {
+        emptyQueue.style.display = 'flex';
+        queueList.innerHTML = '';
+        queueList.appendChild(emptyQueue);
+        return;
+    }
+    
+    emptyQueue.style.display = 'none';
+    
+    queueList.innerHTML = downloadQueue.map((task, index) => {
+        const isActive = task.status === 'downloading';
+        const showProgress = isActive || task.status === 'completed' || task.status === 'error';
+        
+        if (isActive) {
+            // 正在下载的文件显示详细信息
+            return `
+                <div class="queue-item ${isActive ? 'active' : ''}" data-id="${task.id}" data-index="${index}">
+                    <div class="queue-item-icon">
+                        ${getFileIcon(task.fileName)}
+                    </div>
+                    <div class="queue-item-info">
+                        <div class="queue-item-main">
+                            <div class="queue-item-name">${task.fileName}</div>
+                            <div class="queue-item-right">
+                                <span class="queue-percent">${task.progress}%</span>
+                            </div>
+                        </div>
+                        <div class="queue-progress-container">
+                            <div class="queue-progress-bar" style="width: ${task.progress}%"></div>
+                        </div>
+                        <div class="queue-chunk-info">${task.chunkInfo || '正在下载...'}</div>
+                    </div>
+                    <div class="queue-item-actions">
+                        <button class="queue-action-btn stop queue-btn-stop" data-index="${index}" title="停止下载">
+                            <i class="fa-solid fa-square"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        } else {
+            // 等待下载/已完成/失败的文件显示状态信息
+            let statusText = '';
+            let statusClass = '';
+            if (task.status === 'pending') {
+                statusText = '等待中';
+                statusClass = 'queue-status-pending';
+            } else if (task.status === 'completed') {
+                statusText = '已完成';
+                statusClass = 'queue-status-completed';
+            } else if (task.status === 'error') {
+                statusText = task.progressText || '下载失败';
+                statusClass = 'queue-status-error';
+            }
+            
+            return `
+                <div class="queue-item" data-id="${task.id}" data-index="${index}">
+                    <div class="queue-item-icon">
+                        ${getFileIcon(task.fileName)}
+                    </div>
+                    <div class="queue-item-info">
+                        <div class="queue-item-name">${task.fileName}</div>
+                        <div class="queue-item-status ${statusClass}">${statusText}</div>
+                    </div>
+                    <div class="queue-item-actions">
+                        ${task.status === 'pending' ? `
+                            <button class="queue-action-btn queue-btn-remove" data-index="${index}" title="删除任务">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        ` : ''}
+                        ${task.status === 'completed' ? `
+                            <button class="queue-action-btn queue-btn-remove" data-index="${index}" title="移除任务">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        ` : ''}
+                        ${task.status === 'error' ? `
+                            <button class="queue-action-btn queue-btn-retry" data-index="${index}" title="重试下载">
+                                <i class="fa-solid fa-refresh"></i>
+                            </button>
+                            <button class="queue-action-btn queue-btn-remove" data-index="${index}" title="删除任务">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+    }).join('');
+}
+
+// 获取文件图标（与文件列表保持一致）
+function getFileIcon(fileName) {
+    const ext = fileName.split('.').pop().toLowerCase();
+    const iconMap = {
+        'pdf': 'fa-file-pdf',
+        'doc': 'fa-file-word',
+        'docx': 'fa-file-word',
+        'xls': 'fa-file-excel',
+        'xlsx': 'fa-file-excel',
+        'ppt': 'fa-file-powerpoint',
+        'pptx': 'fa-file-powerpoint',
+        'txt': 'fa-file-text',
+        'jpg': 'fa-file-image',
+        'jpeg': 'fa-file-image',
+        'png': 'fa-file-image',
+        'gif': 'fa-file-image',
+        'zip': 'fa-file-archive',
+        'rar': 'fa-file-archive',
+        '7z': 'fa-file-archive',
+        'js': 'fa-file-code',
+        'json': 'fa-file-code',
+        'html': 'fa-file-code',
+        'css': 'fa-file-code',
+        'exe': 'fa-file-exe'
+    };
+    
+    const iconClass = iconMap[ext] || 'fa-file';
+    return `<i class="fa-solid ${iconClass}" style="color: var(--primary-color);"></i>`;
+}
+
+// 从队列中移除任务
+function removeFromQueue(index) {
+    console.log('removeFromQueue called with index:', index, 'queue length before:', downloadQueue.length);
+    downloadQueue.splice(index, 1);
+    console.log('queue length after:', downloadQueue.length);
+    updateQueueUI();
+}
+
+// 停止下载
+async function stopDownload(index) {
+    if (downloadQueue[index].status === 'downloading') {
+        // 调用主进程取消下载
+        await window.electronAPI.cancelDownload();
+        
+        downloadQueue[index].status = 'pending';
+        downloadQueue[index].progress = 0;
+        downloadQueue[index].progressText = '已暂停';
+        downloadQueue[index].chunkInfo = '';
+        isDownloading = false;
+        console.log('isDownloading set to false in stopDownload');
+        currentDownloadTask = null;
+        updateQueueUI();
+        startDownloadQueue();
+    }
+}
+
+// 重试下载
+function retryDownload(index) {
+    downloadQueue[index].status = 'pending';
+    downloadQueue[index].progress = 0;
+    downloadQueue[index].progressText = '等待下载';
+    downloadQueue[index].chunkInfo = '';
+    updateQueueUI();
+    startDownloadQueue();
+}
+
+// 清空下载队列
+function clearDownloadQueue() {
+    downloadQueue = [];
+    isDownloading = false;
+    currentDownloadTask = null;
+    updateQueueUI();
+}
+
+// 全局函数导出（供HTML中onclick使用）
+window.removeFromQueue = removeFromQueue;
+window.stopDownload = stopDownload;
+window.retryDownload = retryDownload;
+
+// ==================== 显示新建文件夹模态框（独立于文件详情模态框） ====================
+function showCreateFolderModal() {
+    // 创建独立的模态框容器
+    const folderModalOverlay = document.createElement('div');
+    folderModalOverlay.className = 'modal-overlay';
+    folderModalOverlay.style.display = 'flex';
+    
+    const folderModal = document.createElement('div');
+    folderModal.className = 'modal';
+    
+    folderModal.innerHTML = `
+        <div class="modal-header">
+            <h3>新建文件夹</h3>
+            <button class="modal-close" id="folderModalClose">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label for="folderName">名称</label>
+                <input type="text" id="folderName" class="form-input" placeholder="请输入文件夹名称">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" id="folderModalCancel">取消</button>
+            <button class="btn btn-primary" id="folderModalSubmit">创建</button>
+        </div>
+    `;
+    
+    folderModalOverlay.appendChild(folderModal);
+    document.body.appendChild(folderModalOverlay);
+    
+    // 添加显示动画
+    setTimeout(() => {
+        folderModalOverlay.classList.add('active');
+    }, 10);
+    
+    const folderNameInput = document.getElementById('folderName');
+    const closeModal = () => {
+        folderModalOverlay.classList.remove('active');
+        setTimeout(() => {
+            document.body.removeChild(folderModalOverlay);
+        }, 300);
+    };
+    
+    // 绑定事件
+    document.getElementById('folderModalClose').addEventListener('click', closeModal);
+    document.getElementById('folderModalCancel').addEventListener('click', closeModal);
+    folderModalOverlay.addEventListener('click', (e) => {
+        if (e.target === folderModalOverlay) closeModal();
+    });
+    
+    document.getElementById('folderModalSubmit').addEventListener('click', async () => {
+        const name = folderNameInput.value.trim();
+        if (!name) {
+            alert('请输入文件夹名称');
+            return;
+        }
+        
+        try {
+            await addNewItem('folder', name);
+            closeModal();
+            showNotification('文件夹创建成功！');
+        } catch (error) {
+            console.error('创建文件夹失败:', error);
+            showNotification('创建文件夹失败: ' + error.message, 'error');
+        }
+    });
+    
+    // 聚焦输入框
+    setTimeout(() => folderNameInput.focus(), 300);
+}
+
+async function addNewItem(type, name) {
+    const newId = Math.max(...fileDataList.map(item => item.id), 0) + 1;
+    const newItem = {
+        id: newId,
+        name: name,
+        type: type,
+        author: "A萌菌",
+        date: new Date().toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+    };
+    
+    if (type === 'file') {
+        const fileType = document.getElementById('fileType').value;
+        newItem.ext = fileType.substring(1);
+    }
+    
+    // 对于文件夹，上传到数据库
+    if (type === 'folder') {
+        try {
+            // 调用上传API，数据和校验码都为"floder"，并设置floder字段为当前目录ID
+            const result = await window.electronAPI.uploadFile({
+                name: name,
+                base64: "floder",
+                sha256: "floder",
+                floder: currentDirectory
+            });
+            
+            // 获取新文件夹的ID并更新用户的owned_file
+            // API返回的数据直接包含id字段，不是嵌套在data对象中
+            if (result && result.id) {
+                const newFolderId = result.id;
+                const userOwnedFileIds = getUserOwnedFileIds();
+                userOwnedFileIds.push(newFolderId);
+                await updateUserOwnedFiles(userOwnedFileIds);
+                
+                // 如果是Administrator，实时更新owned_file确保对所有文件的访问
+                if (isAdministrator()) {
+                    await refreshAdministratorOwnedFiles();
+                }
+            }
+            
+            // 重新获取文件列表
+            await fetchFilesFromDatabase();
+            
+            // 显示成功消息
+            showNotification('文件夹创建成功！');
+        } catch (error) {
+            console.error('创建文件夹失败:', error);
+            showNotification('创建文件夹失败: ' + error.message, 'error');
+            
+            // 如果API上传失败，至少在本地添加
+            newItem.floder = currentDirectory;
+            fileDataList.push(newItem);
+            refreshUi();
+        }
+    } else {
+        // 对于文件，只在本地添加（因为文件上传是通过专门的上传按钮处理的）
+        newItem.floder = currentDirectory;
+        fileDataList.push(newItem);
+        refreshUi();
+    }
+}
