@@ -8,6 +8,14 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
+    <!-- 全局加载遮罩 -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <span>加载中...</span>
+        </div>
+    </div>
+
     <!-- 登录界面 -->
     <div class="login-container" id="loginContainer">
         <div class="login-card">
@@ -77,9 +85,10 @@
                 <span>传输队列</span>
                 <span class="queue-badge" id="queueBadge" style="display:none;">0</span>
             </a> -->
-            <a href="#" class="nav-item">
+            <a href="#" class="nav-item" id="localStorageNav" style="display: none;">
                 <span class="nav-icon"><i class="fa-solid fa-users"></i></span>
                 <span>本地存储区</span>
+                <span class="dev-badge">开发中</span>
             </a>
 
             <div class="sidebar-bottom">
@@ -110,19 +119,25 @@
             <!-- 文件列表区域 -->
             <div class="card file-view" style="flex:1; display:flex; flex-direction:column; overflow:hidden; border-top-left-radius:0; border-top-right-radius:0;">
                 <div class="toolbar">
-                    <div class="dropdown-container">
-                        <button class="btn btn-primary" id="newButton">
-                            <i class="fa-solid fa-plus"></i> 新建
-                        </button>
-                        <div class="dropdown-menu" id="newMenu">
-                            <button class="dropdown-item" data-type="folder">
-                                <i class="fa-solid fa-folder" style="width:20px;"></i> 文件夹
+                    <div class="toolbar-left">
+                        <div class="dropdown-container">
+                            <button class="btn btn-primary" id="newButton">
+                                <i class="fa-solid fa-plus"></i> 新建
                             </button>
+                            <div class="dropdown-menu" id="newMenu">
+                                <button class="dropdown-item" data-type="folder">
+                                    <i class="fa-solid fa-folder" style="width:20px;"></i> 文件夹
+                                </button>
+                            </div>
                         </div>
+                        <button class="btn" id="receiveButton" style="margin-left: 8px;">
+                            <i class="fa-solid fa-download"></i> 接收文件
+                        </button>
                     </div>
-                    <button class="btn" id="receiveButton" style="margin-left: 8px;">
-                        <i class="fa-solid fa-download"></i> 接收文件
-                    </button>
+                    <div class="loading-indicator" id="folderLoadingIndicator">
+                        <i class="fa-solid fa-spinner fa-spin"></i>
+                        <span>加载中</span>
+                    </div>
                 </div>
 
                 <div class="file-list-container">
@@ -195,7 +210,7 @@
             </div>
         </div>
     </div>
-    
+
     <!-- 网络错误提示 -->
     <div id="networkError" class="network-error" style="display: none;">
         <div class="network-error-content">

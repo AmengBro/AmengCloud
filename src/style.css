@@ -10,8 +10,8 @@
     --danger-color: #e53935;
 }
 
-/* 暗黑模式变量 */
-:root[data-theme="dark"] {
+/* 暗黑模式变量（默认启用） */
+:root {
     --bg-color: #202020;
     --card-color: #2d2d2d;
     --text-color: #e0e0e0;
@@ -20,6 +20,17 @@
     --hover-color: #3a3a3a;
     --primary-color: #40a0ff;
     --danger-color: #ff6161;
+}
+
+:root[data-theme="light"] {
+    --bg-color: #f0f2f5;
+    --card-color: #ffffff;
+    --text-color: #111111;
+    --text-secondary: #666666;
+    --border-color: #e5e5e5;
+    --hover-color: #f3f4f6;
+    --primary-color: #0078D4;
+    --danger-color: #e53935;
 }
 
 * {
@@ -233,6 +244,17 @@ body {
     transform: scale(1.2);
 }
 
+/* 开发中徽章 */
+.dev-badge {
+    margin-left: auto;
+    font-size: 10px;
+    padding: 2px 6px;
+    background-color: rgba(255, 193, 7, 0.2);
+    color: #ffc107;
+    border-radius: 4px;
+    font-weight: 500;
+}
+
 .sidebar-bottom {
     margin-top: auto;
     border-top: 1px solid var(--border-color);
@@ -298,6 +320,34 @@ body {
     border-bottom: 1px solid var(--border-color);
     display: flex;
     gap: 12px;
+    align-items: center;
+}
+
+.toolbar-left {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+/* 文件夹加载指示器 */
+.loading-indicator {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--primary-color);
+    padding: 4px 8px;
+    background-color: rgba(64, 160, 255, 0.1);
+    border-radius: 4px;
+    margin-left: auto;
+}
+
+.loading-indicator.visible {
+    display: flex;
+}
+
+.loading-indicator i {
+    font-size: 14px;
 }
 
 .btn {
@@ -1033,6 +1083,51 @@ webview {
 
 .network-error button {
     margin-top: 16px;
+}
+
+/* 加载遮罩 */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #202020; /* 暗黑背景 */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+}
+
+.loading-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.loading-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    color: #e0e0e0;
+    font-size: 16px;
+}
+
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #3a3a3a;
+    border-top-color: #40a0ff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 /* 表单元素 */

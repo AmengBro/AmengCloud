@@ -13,6 +13,42 @@ let registerEventsBound = false;
 
 console.log('runner.js 开始加载');
 
+// 显示加载遮罩
+function showLoading(message = '加载中...') {
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    if (loadingOverlay) {
+        loadingOverlay.classList.remove('hidden');
+        const loadingText = loadingOverlay.querySelector('span');
+        if (loadingText) {
+            loadingText.textContent = message;
+        }
+    }
+}
+
+// 隐藏加载遮罩
+function hideLoading() {
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    if (loadingOverlay) {
+        loadingOverlay.classList.add('hidden');
+    }
+}
+
+// 显示文件夹加载指示器
+function showFolderLoading() {
+    const loadingIndicator = document.getElementById('folderLoadingIndicator');
+    if (loadingIndicator) {
+        loadingIndicator.classList.add('visible');
+    }
+}
+
+// 隐藏文件夹加载指示器
+function hideFolderLoading() {
+    const loadingIndicator = document.getElementById('folderLoadingIndicator');
+    if (loadingIndicator) {
+        loadingIndicator.classList.remove('visible');
+    }
+}
+
 // 模态确认对话框
 function showConfirmModal(message) {
     return new Promise((resolve) => {
@@ -316,14 +352,22 @@ async function reloadApp() {
 
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOMContentLoaded 事件触发');
+    
+    // 初始化主题（确保暗黑模式立即生效）
+    initTheme();
+    
     // 检测网络连接
     if (!checkNetworkConnection()) {
         showNetworkError();
+        hideLoading(); // 即使网络错误也要隐藏加载遮罩
         return;
     }
     
     // 显示登录界面
     showLoginScreen();
+    
+    // 页面初始化完成，隐藏加载遮罩
+    hideLoading();
 });
 
 // 更新用户名显示
@@ -486,13 +530,20 @@ async function showLoginScreen() {
                 loginButton.disabled = true;
                 loginButton.textContent = '登录中...';
                 
+                // 显示加载遮罩
+                showLoading('登录中...');
+                
                 const user = await window.electronAPI.login(username, password);
                 currentUser = user;
                 
+                // 初始化主应用（在隐藏加载遮罩前完成）
                 showNotification('登录成功！');
                 loginContainer.style.display = 'none';
                 mainApp.style.display = 'flex';
-                initMainApp();
+                await initMainApp();
+                
+                // 隐藏加载遮罩
+                hideLoading();
             } catch (error) {
                 console.error('登录失败:', error);
                 showNotification('登录失败: ' + error.message, 'error');
@@ -500,6 +551,8 @@ async function showLoginScreen() {
                 loginButton.textContent = '登录';
                 loginUsernameInput.disabled = false;
                 loginPasswordInput.disabled = false;
+                // 登录失败也要隐藏加载遮罩
+                hideLoading();
             }
         });
         
@@ -604,6 +657,9 @@ window.addEventListener('offline', function() {
 
 // 从数据库获取文件列表
 async function fetchFilesFromDatabase() {
+    // 显示加载指示器
+    showFolderLoading();
+    
     try {
         // 获取当前用户和用户拥有的文件ID列表
         if (!currentUser) {
@@ -692,6 +748,9 @@ async function fetchFilesFromDatabase() {
         
         refreshUi();
         showNotification('获取文件列表失败: ' + error.message, 'error');
+    } finally {
+        // 隐藏加载指示器
+        hideFolderLoading();
     }
 }
 
@@ -753,6 +812,7 @@ function refreshUi() {
             // 如果是文件夹，进入该文件夹
             if (data.type === 'folder' && !isNavigating) {
                 isNavigating = true;
+                showFolderLoading(); // 立即显示加载指示器
                 try {
                     directoryPath.push(currentDirectory);
                     currentDirectory = data.id;
@@ -824,6 +884,7 @@ async function updatePathNav() {
             if (targetId === currentDirectory) return;
             
             isNavigating = true;
+            showFolderLoading(); // 立即显示加载指示器
             try {
                 // 直接设置当前目录，路径导航会根据currentDirectory重建
                 currentDirectory = targetId;
@@ -846,6 +907,7 @@ async function updatePathNav() {
 async function goBack() {
     if (directoryPath.length > 0 && !isNavigating) {
         isNavigating = true;
+        showFolderLoading(); // 立即显示加载指示器
         try {
             currentDirectory = directoryPath.pop();
             await updatePathNav();
@@ -924,6 +986,24 @@ function setupEvents() {
     const receiveButton = document.getElementById('receiveButton');
     if (receiveButton) {
         receiveButton.addEventListener('click', showReceiveModal);
+    }
+    
+    // 本地存储区点击事件（开发中提示）
+    const localStorageNav = document.getElementById('localStorageNav');
+    if (localStorageNav) {
+        localStorageNav.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            showNotification('功能开发中，敬请期待', 'info');
+            
+            // 切回云端文件夹
+            const navFiles = document.getElementById('navFiles');
+            const localStorageItem = document.getElementById('localStorageNav');
+            if (navFiles && localStorageItem) {
+                document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
+                navFiles.classList.add('active');
+            }
+        });
     }
     
     // 为HTML中静态的"根目录"span元素添加点击事件
