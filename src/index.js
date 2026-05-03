@@ -1219,4 +1219,165 @@ function setupIpcHandlers() {
       throw error;
     }
   });
+
+  // ====== 分享功能 ======
+  ipcMain.handle('share:create', async (event, { fileName, fileId, password }) => {
+    try {
+      const shareUrl = 'https://data.520ai.cc/api/bases/bseloUQsS6clyMZgVMK/tables/yyZol13kp6/records';
+      const apiKey = 'PZs9PbId3FAWJkcSqauwQ3pA9Elcxj7LDMW6ddnQ';
+
+      console.log('====================================');
+      console.log('创建分享:', { fileName, fileId, hasPassword: !!password });
+
+      const response = await fetch(shareUrl, {
+        method: 'POST',
+        headers: {
+          'x-bm-token': apiKey,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: fileName,
+          fileid: fileId.toString(),
+          Words: password || ''
+        })
+      });
+
+      if (!response.ok) {
+        const responseText = await response.text();
+        throw new Error(`创建分享失败: ${response.status} ${response.statusText}\n响应内容: ${responseText}`);
+      }
+
+      const responseData = await response.json();
+      console.log('创建分享成功:', responseData);
+      console.log('====================================');
+      return responseData;
+    } catch (error) {
+      console.error('创建分享失败:', error);
+      throw error;
+    }
+  });
+
+  // 获取分享列表
+  ipcMain.handle('share:list', async (event) => {
+    try {
+      const shareUrl = 'https://data.520ai.cc/api/bases/bseloUQsS6clyMZgVMK/tables/yyZol13kp6/records';
+      const apiKey = 'PZs9PbId3FAWJkcSqauwQ3pA9Elcxj7LDMW6ddnQ';
+
+      console.log('====================================');
+      console.log('获取分享列表');
+
+      const response = await fetch(shareUrl, {
+        method: 'GET',
+        headers: {
+          'x-bm-token': apiKey
+        }
+      });
+
+      if (!response.ok) {
+        const responseText = await response.text();
+        throw new Error(`获取分享列表失败: ${response.status} ${response.statusText}\n响应内容: ${responseText}`);
+      }
+
+      const responseData = await response.json();
+      console.log('获取分享列表成功:', responseData);
+      console.log('====================================');
+      return responseData;
+    } catch (error) {
+      console.error('获取分享列表失败:', error);
+      throw error;
+    }
+  });
+
+  // 根据文件ID获取分享信息
+  ipcMain.handle('share:getByFileId', async (event, fileId) => {
+    try {
+      const shareUrl = 'https://data.520ai.cc/api/bases/bseloUQsS6clyMZgVMK/tables/yyZol13kp6/records';
+      const apiKey = 'PZs9PbId3FAWJkcSqauwQ3pA9Elcxj7LDMW6ddnQ';
+
+      console.log('====================================');
+      console.log('获取分享信息:', fileId);
+
+      const response = await fetch(shareUrl, {
+        method: 'GET',
+        headers: {
+          'x-bm-token': apiKey
+        }
+      });
+
+      if (!response.ok) {
+        const responseText = await response.text();
+        throw new Error(`获取分享信息失败: ${response.status} ${response.statusText}\n响应内容: ${responseText}`);
+      }
+
+      const responseData = await response.json();
+      const share = responseData.data.find(item => item.fileid === fileId.toString());
+      console.log('获取分享信息成功:', share);
+      console.log('====================================');
+      return share;
+    } catch (error) {
+      console.error('获取分享信息失败:', error);
+      throw error;
+    }
+  });
+
+  // 根据分享ID获取分享信息
+  ipcMain.handle('share:getById', async (event, shareId) => {
+    try {
+      const shareUrl = `https://data.520ai.cc/api/bases/bseloUQsS6clyMZgVMK/tables/yyZol13kp6/records/${shareId}`;
+      const apiKey = 'PZs9PbId3FAWJkcSqauwQ3pA9Elcxj7LDMW6ddnQ';
+
+      console.log('====================================');
+      console.log('根据ID获取分享:', shareId);
+
+      const response = await fetch(shareUrl, {
+        method: 'GET',
+        headers: {
+          'x-bm-token': apiKey
+        }
+      });
+
+      if (!response.ok) {
+        const responseText = await response.text();
+        throw new Error(`获取分享失败: ${response.status} ${response.statusText}\n响应内容: ${responseText}`);
+      }
+
+      const responseData = await response.json();
+      console.log('获取分享成功:', responseData);
+      console.log('====================================');
+      return responseData;
+    } catch (error) {
+      console.error('获取分享失败:', error);
+      throw error;
+    }
+  });
+
+  // 删除分享
+  ipcMain.handle('share:delete', async (event, shareId) => {
+    try {
+      const shareUrl = `https://data.520ai.cc/api/bases/bseloUQsS6clyMZgVMK/tables/yyZol13kp6/records/${shareId}`;
+      const apiKey = 'PZs9PbId3FAWJkcSqauwQ3pA9Elcxj7LDMW6ddnQ';
+
+      console.log('====================================');
+      console.log('删除分享:', shareId);
+
+      const response = await fetch(shareUrl, {
+        method: 'DELETE',
+        headers: {
+          'x-bm-token': apiKey
+        }
+      });
+
+      if (!response.ok) {
+        const responseText = await response.text();
+        throw new Error(`删除分享失败: ${response.status} ${response.statusText}\n响应内容: ${responseText}`);
+      }
+
+      console.log('删除分享成功');
+      console.log('====================================');
+      return { success: true };
+    } catch (error) {
+      console.error('删除分享失败:', error);
+      throw error;
+    }
+  });
 }

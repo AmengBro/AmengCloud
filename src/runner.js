@@ -339,6 +339,8 @@ function updateUsernameDisplay() {
 function logout() {
     console.log('logout 函数被调用');
     currentUser = null;
+    currentDirectory = 0; // 重置为根目录
+    directoryPath = []; // 重置路径
     const loginContainer = document.getElementById('loginContainer');
     const registerContainer = document.getElementById('registerContainer');
     const mainApp = document.getElementById('mainApp');
@@ -918,6 +920,12 @@ function setupEvents() {
     // 返回按钮点击事件
     backButton.addEventListener('click', goBack);
     
+    // 接收文件按钮事件
+    const receiveButton = document.getElementById('receiveButton');
+    if (receiveButton) {
+        receiveButton.addEventListener('click', showReceiveModal);
+    }
+    
     // 为HTML中静态的"根目录"span元素添加点击事件
     const rootPathItem = pathNav.querySelector('[data-id="0"]');
     if (rootPathItem) {
@@ -1126,6 +1134,112 @@ function setupEvents() {
                             showNotification('下载文件失败: ' + error.message, 'error');
                         }
                     });
+                
+                hideMenu();
+            });
+        } else if (item.textContent.includes('分享')) {
+            item.addEventListener('click', async function(e) {
+                e.stopPropagation();
+                if (currentOperateId === -1) return;
+                
+                let fileName = "";
+                let fileId = "";
+                let folderId = 0;
+                for (let i = 0; i < fileDataList.length; i++) {
+                    if (fileDataList[i].id === currentOperateId) {
+                        fileName = fileDataList[i].name;
+                        fileId = fileDataList[i].id;
+                        folderId = fileDataList[i].floder || 0;
+                        break;
+                    }
+                }
+                
+                const modalOverlay = document.getElementById('modalOverlay');
+                const modal = document.getElementById('modal');
+                modalOverlay.classList.add('active');
+                isNewItemModal = false;
+                
+                // 如果文件不在根目录，显示警告提示
+                const folderWarning = folderId !== 0 ? `
+                    <div class="form-group" style="background-color: #fef3c7; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+                        <label style="color: #b45309; font-weight: bold;">⚠️ 提示</label>
+                        <div style="color: #92400e; margin-top: 4px;">
+                            你也许需要分享其父目录才会给对方展示该文件
+                        </div>
+                    </div>
+                ` : '';
+                
+                modal.innerHTML = `
+                    <div class="modal-header">
+                        <h3>分享文件</h3>
+                        <button class="modal-close" id="modalClose">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        ${folderWarning}
+                        <div class="form-group">
+                            <label for="shareDescription">文件信息</label>
+                            <input type="text" id="shareDescription" class="form-input" value="${fileName}" placeholder="例如：这是我的论文">
+                        </div>
+                        <div class="form-group">
+                            <label for="sharePassword">设置密码（可选）</label>
+                            <input type="password" id="sharePassword" class="form-input" placeholder="留空则无需密码">
+                        </div>
+                        <div class="form-group">
+                            <label>分享链接</label>
+                            <div class="form-input readonly" id="shareLink" style="word-break: break-all; color: var(--primary-color); font-family: monospace;"></div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn" id="modalCancel">取消</button>
+                        <button class="btn btn-primary" id="modalSubmit">创建分享</button>
+                    </div>
+                `;
+                
+                function closeModal() {
+                    modalOverlay.classList.remove('active');
+                    isNewItemModal = true;
+                }
+                
+                document.getElementById('modalCancel').addEventListener('click', closeModal);
+                document.getElementById('modalClose').addEventListener('click', closeModal);
+                modalOverlay.addEventListener('click', function(e) {
+                    if (e.target === modalOverlay) closeModal();
+                });
+                
+                document.getElementById('modalSubmit').addEventListener('click', async function() {
+                    const description = document.getElementById('shareDescription').value.trim() || fileName;
+                    const password = document.getElementById('sharePassword').value.trim();
+                    
+                    try {
+                        const result = await window.electronAPI.createShare(description, fileId, password);
+                        console.log('分享创建成功:', result);
+                        
+                        // 生成分享链接：amengshare://{Id}.sharedameng.{随机数}.file
+                        const shareId = result.data && result.data.id ? result.data.id : result.id;
+                        const randomNum = Math.random().toString(36).substring(2, 10);
+                        const shareLink = `amengshare://${shareId}.sharedameng.${randomNum}.file`;
+                        document.getElementById('shareLink').textContent = shareLink;
+                        
+                        showNotification('分享创建成功！');
+                        
+                        // 复制链接到剪贴板
+                        try {
+                            await navigator.clipboard.writeText(shareLink);
+                            showNotification('链接已复制到剪贴板！');
+                        } catch (err) {
+                            console.log('无法复制到剪贴板');
+                        }
+                        
+                        // 禁用创建按钮，改为关闭按钮
+                        document.getElementById('modalSubmit').textContent = '关闭';
+                        document.getElementById('modalSubmit').addEventListener('click', closeModal);
+                    } catch (error) {
+                        console.error('创建分享失败:', error);
+                        showNotification('创建分享失败: ' + error.message, 'error');
+                    }
+                });
                 
                 hideMenu();
             });
@@ -1503,6 +1617,281 @@ function setupFileUpload() {
     
     // 插入到下拉菜单的末尾
     newMenu.appendChild(uploadItem);
+}
+
+// 显示接收文件模态框
+function showReceiveModal() {
+    const modalOverlay = document.getElementById('modalOverlay');
+    const modal = document.getElementById('modal');
+    modalOverlay.classList.add('active');
+    isNewItemModal = false;
+    
+    modal.innerHTML = `
+        <div class="modal-header">
+            <h3>接收文件</h3>
+            <button class="modal-close" id="modalClose">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label for="shareLinks">分享链接（每行一条）</label>
+                <textarea id="shareLinks" class="form-input" rows="6" placeholder="amengshare://1.sharedameng.abc123.file&#10;amengshare://2.sharedameng.def456.file"></textarea>
+            </div>
+            <div id="receiveResults" style="display: none; margin-top: 16px;">
+                <h4 style="margin-bottom: 8px;">处理结果</h4>
+                <div id="resultsList" style="max-height: 200px; overflow-y: auto;"></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" id="modalCancel">取消</button>
+            <button class="btn btn-primary" id="modalSubmit">开始接收</button>
+        </div>
+    `;
+    
+    function closeModal() {
+        modalOverlay.classList.remove('active');
+        isNewItemModal = true;
+    }
+    
+    document.getElementById('modalCancel').addEventListener('click', closeModal);
+    document.getElementById('modalClose').addEventListener('click', closeModal);
+    modalOverlay.addEventListener('click', function(e) {
+        if (e.target === modalOverlay) closeModal();
+    });
+    
+    document.getElementById('modalSubmit').addEventListener('click', async function() {
+        const linksText = document.getElementById('shareLinks').value.trim();
+        if (!linksText) {
+            showNotification('请输入分享链接', 'error');
+            return;
+        }
+        
+        // 分割链接（支持多行）
+        const links = linksText.split(/\r?\n/).filter(link => link.trim());
+        const resultsList = document.getElementById('resultsList');
+        const receiveResults = document.getElementById('receiveResults');
+        
+        receiveResults.style.display = 'block';
+        resultsList.innerHTML = '';
+        
+        // 依次解析每条链接
+        for (let i = 0; i < links.length; i++) {
+            const link = links[i].trim();
+            await processShareLink(link, resultsList);
+        }
+        
+        showNotification('批量处理完成！');
+        document.getElementById('modalSubmit').textContent = '关闭';
+        document.getElementById('modalSubmit').addEventListener('click', closeModal);
+    });
+}
+
+// 解析分享链接并处理
+async function processShareLink(link, resultsContainer) {
+    try {
+        // 解析链接格式: amengshare://{Id}.sharedameng.{随机数}.file
+        const regex = /^amengshare:\/\/(\d+)\.sharedameng\.[a-zA-Z0-9]+\.file$/;
+        const match = link.match(regex);
+
+        if (!match) {
+            addResult(resultsContainer, link, '无效的分享链接格式', 'error');
+            return;
+        }
+
+        const shareId = match[1];
+        console.log('解析分享链接:', link, '分享ID:', shareId);
+
+        // 获取分享信息
+        const shareResult = await window.electronAPI.getShareById(shareId);
+        console.log('API返回结果:', shareResult);
+        
+        if (!shareResult) {
+            addResult(resultsContainer, link, '分享不存在或已过期', 'error');
+            return;
+        }
+        
+        // 检查数据结构
+        const shareData = shareResult.data || shareResult;
+        console.log('分享数据:', shareData);
+        
+        if (!shareData || !shareData.fileid) {
+            addResult(resultsContainer, link, '分享数据格式错误', 'error');
+            return;
+        }
+
+        // 获取被分享文件的信息
+        const fileInfo = await getFileInfoById(shareData.fileid);
+        if (!fileInfo) {
+            addResult(resultsContainer, link, '分享的文件不存在', 'error');
+            return;
+        }
+
+        // 如果有密码，需要验证
+        if (shareData.Words && shareData.Words.trim()) {
+            let attempts = 0;
+            let maxAttempts = 3;
+            let password;
+
+            while (attempts < maxAttempts) {
+                password = await promptPassword(shareData.name);
+                if (!password) {
+                    addResult(resultsContainer, link, '已取消', 'error');
+                    return;
+                }
+                if (password === shareData.Words) {
+                    break;
+                }
+                attempts++;
+                if (attempts >= maxAttempts) {
+                    addResult(resultsContainer, link, `密码错误次数过多（${maxAttempts}次）`, 'error');
+                    return;
+                }
+                addResult(resultsContainer, link, `密码错误，剩余 ${maxAttempts - attempts} 次尝试机会`, 'error');
+            }
+        }
+
+        // 将文件添加到用户的ownedfile
+        await addFileToOwnedFiles(shareData.fileid);
+
+        const fileType = fileInfo.type === 'folder' ? '文件夹' : '文件';
+        addResult(resultsContainer, link, `${fileType} "${fileInfo.name}" 接收成功`, 'success');
+
+    } catch (error) {
+        console.error('处理分享链接失败:', error);
+        addResult(resultsContainer, link, '处理失败: ' + error.message, 'error');
+    }
+}
+
+// 添加处理结果
+function addResult(container, link, message, type) {
+    const resultItem = document.createElement('div');
+    resultItem.style.padding = '8px';
+    resultItem.style.borderRadius = '4px';
+    resultItem.style.marginBottom = '4px';
+    resultItem.style.fontSize = '13px';
+    
+    if (type === 'success') {
+        resultItem.style.backgroundColor = '#dcfce7';
+        resultItem.style.color = '#166534';
+    } else {
+        resultItem.style.backgroundColor = '#fee2e2';
+        resultItem.style.color = '#991b1b';
+    }
+    
+    resultItem.innerHTML = `<strong>${link}</strong><br>${message}`;
+    container.appendChild(resultItem);
+}
+
+// 密码输入弹窗（使用独立遮罩）
+function promptPassword(shareName) {
+    return new Promise((resolve) => {
+        const modalOverlay = document.getElementById('modalOverlay');
+        const passwordOverlay = document.createElement('div');
+        passwordOverlay.className = 'modal-overlay active';
+        passwordOverlay.id = 'passwordOverlay';
+
+        passwordOverlay.innerHTML = `
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>输入分享密码</h3>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>分享 "${shareName}" 需要密码</label>
+                        <input type="password" id="passwordInput" class="form-input" placeholder="请输入密码">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn" id="passwordCancel">取消</button>
+                    <button class="btn btn-primary" id="passwordSubmit">确定</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(passwordOverlay);
+
+        const passwordInput = document.getElementById('passwordInput');
+        const submitBtn = document.getElementById('passwordSubmit');
+        const cancelBtn = document.getElementById('passwordCancel');
+
+        passwordInput.focus();
+
+        passwordInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                submitBtn.click();
+            }
+        });
+
+        function cleanup() {
+            document.body.removeChild(passwordOverlay);
+        }
+
+        submitBtn.addEventListener('click', function() {
+            const password = passwordInput.value;
+            cleanup();
+            resolve(password);
+        });
+
+        cancelBtn.addEventListener('click', function() {
+            cleanup();
+            resolve(null);
+        });
+    });
+}
+
+// 根据文件ID获取文件信息
+async function getFileInfoById(fileId) {
+    try {
+        const response = await window.electronAPI.fetchFiles();
+        if (response && response.data) {
+            return response.data.find(item => item.id == fileId);
+        }
+        return null;
+    } catch (error) {
+        console.error('获取文件信息失败:', error);
+        return null;
+    }
+}
+
+// 将文件添加到用户的ownedfile
+async function addFileToOwnedFiles(fileId) {
+    try {
+        if (!currentUser) {
+            throw new Error('请先登录');
+        }
+
+        const userId = currentUser.id;
+        let ownedFiles = [];
+
+        if (currentUser.owned_file) {
+            try {
+                ownedFiles = JSON.parse(currentUser.owned_file);
+                // 确保是数字类型
+                ownedFiles = ownedFiles.map(id => parseInt(id));
+            } catch (e) {
+                ownedFiles = [];
+            }
+        }
+
+        const numericFileId = parseInt(fileId);
+
+        // 避免重复添加
+        if (!ownedFiles.includes(numericFileId)) {
+            ownedFiles.push(numericFileId);
+            await window.electronAPI.updateOwnedFiles(userId, JSON.stringify(ownedFiles));
+
+            // 更新当前用户的owned_file
+            currentUser.owned_file = JSON.stringify(ownedFiles);
+        }
+
+        // 刷新文件列表
+        await fetchFilesFromDatabase();
+
+    } catch (error) {
+        console.error('添加文件到ownedfile失败:', error);
+        throw error;
+    }
 }
 
 // 显示通知

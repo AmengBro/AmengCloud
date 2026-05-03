@@ -41,7 +41,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteChunk: (chunkId) => ipcRenderer.invoke('chunk:delete', chunkId),
   listChunks: () => ipcRenderer.invoke('chunk:list'),
   // 解压相关API
-  decompressBase64: (compressedBase64) => ipcRenderer.invoke('file:decompress', compressedBase64)
+  decompressBase64: (compressedBase64) => ipcRenderer.invoke('file:decompress', compressedBase64),
+  // 分享相关API
+  createShare: (fileName, fileId, password) => ipcRenderer.invoke('share:create', { fileName, fileId, password }),
+  listShares: () => ipcRenderer.invoke('share:list'),
+  getShareByFileId: (fileId) => ipcRenderer.invoke('share:getByFileId', fileId),
+  getShareById: (shareId) => ipcRenderer.invoke('share:getById', shareId),
+  deleteShare: (shareId) => ipcRenderer.invoke('share:delete', shareId)
 });
 
 window.addEventListener('DOMContentLoaded', () => {
