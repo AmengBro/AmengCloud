@@ -828,10 +828,10 @@ function setupIpcHandlers() {
     try {
       const userUrl = 'https://data.520ai.cc/api/bases/bseloUQsS6clyMZgVMK/tables/AnIpKe3pqF/records';
       const apiKey = 'PZs9PbId3FAWJkcSqauwQ3pA9Elcxj7LDMW6ddnQ';
-      
+
       console.log('====================================');
       console.log('用户注册:', username);
-      
+
       // 先检查用户是否已存在
       const checkResponse = await fetch(userUrl, {
         method: 'GET',
@@ -839,21 +839,21 @@ function setupIpcHandlers() {
           'x-bm-token': apiKey
         }
       });
-      
+
       if (!checkResponse.ok) {
         throw new Error(`获取用户列表失败: ${checkResponse.status} ${checkResponse.statusText}`);
       }
-      
+
       const checkData = await checkResponse.json();
-      const existingUser = checkData.data.find(item => 
+      const existingUser = checkData.data.find(item =>
         (item.username && item.username.toLowerCase() === username.toLowerCase()) ||
         (item.Username && item.Username.toLowerCase() === username.toLowerCase())
       );
-      
+
       if (existingUser) {
         throw new Error('用户名已存在');
       }
-      
+
       // 创建新用户 - 使用https模块
       // 注意：用户表字段名是 Username（大写开头），没有 uuid 字段
       const requestBody = {
@@ -1062,6 +1062,7 @@ function setupIpcHandlers() {
       
       // 查找引用该文件的用户
       const referencingUsers = [];
+      const fileIdStr = String(fileId); // 转为字符串用于比较
       for (const user of users) {
         if (user.owned_file) {
           let ownedFiles = [];
@@ -1070,7 +1071,8 @@ function setupIpcHandlers() {
           } catch (e) {
             ownedFiles = [];
           }
-          if (ownedFiles.includes(fileId)) {
+          // 使用字符串比较，避免类型不匹配
+          if (ownedFiles.map(id => String(id)).includes(fileIdStr)) {
             referencingUsers.push(user.id);
           }
         }

@@ -68,6 +68,28 @@
         </div>
     </div>
 
+    <!-- 滑块验证遮罩 -->
+    <div class="captcha-overlay" id="captchaOverlay" style="display:none;">
+        <div class="captcha-container">
+            <div class="captcha-header">
+                <h3>滑块验证</h3>
+                <button class="captcha-close" id="captchaClose">×</button>
+            </div>
+            <div class="captcha-content">
+                <p class="captcha-tip">请拖动滑块完成验证</p>
+                <div class="slider-container">
+                    <div class="slider-track">
+                        <div class="slider-target" id="sliderTarget"></div>
+                        <div class="slider-thumb" id="sliderThumb">
+                            <i class="fa-solid fa-grip-horizontal"></i>
+                        </div>
+                    </div>
+                </div>
+                <p class="captcha-status" id="captchaStatus"></p>
+            </div>
+        </div>
+    </div>
+
     <!-- 主应用容器 -->
     <div class="main-container" id="mainApp" style="display:none;">
         <!-- 左侧边栏 -->
@@ -252,6 +274,10 @@
         </button>
     </div>
 
+    <script>
+        // 本地验证码相关
+        window.captchaToken = null;
+    </script>
     <script src="./runner.js"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-let fileDataList = [];
+﻿let fileDataList = [];
 let currentDirectory = 0; // 当前目录ID，0表示根目录
 let directoryPath = []; // 目录路径历史
 let isNavigating = false; // 防止快速点击导致的重复导航
@@ -95,12 +95,40 @@ function showConfirmModal(message) {
         };
         
         // 绑定事件
-        document.getElementById('confirmModalClose').addEventListener('click', () => closeModal(false));
-        document.getElementById('confirmModalCancel').addEventListener('click', () => closeModal(false));
-        modalOverlay.addEventListener('click', (e) => {
-            if (e.target === modalOverlay) closeModal(false);
+        const closeBtn = document.getElementById('confirmModalClose');
+        const cancelBtn = document.getElementById('confirmModalCancel');
+        const submitBtn = document.getElementById('confirmModalSubmit');
+
+        console.log('确认对话框按钮:', { closeBtn, cancelBtn, submitBtn });
+        console.log('cancelBtn.parentElement:', cancelBtn ? cancelBtn.parentElement : null);
+        console.log('cancelBtn.offsetParent:', cancelBtn ? cancelBtn.offsetParent : null);
+        console.log('modalOverlay是否在body中:', document.body.contains(modalOverlay));
+
+        closeBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('关闭按钮被点击');
+            closeModal(false);
         });
-        document.getElementById('confirmModalSubmit').addEventListener('click', () => closeModal(true));
+        cancelBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('取消按钮被点击');
+            closeModal(false);
+        });
+        modalOverlay.addEventListener('click', (e) => {
+            console.log('遮罩被点击, e.target:', e.target);
+            if (e.target === modalOverlay) {
+                console.log('点击遮罩关闭');
+                closeModal(false);
+            }
+        });
+        submitBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('确认按钮被点击');
+            closeModal(true);
+        });
     });
 }
 const menu = document.getElementById('contextMenu');
@@ -350,22 +378,52 @@ async function reloadApp() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
     console.log('DOMContentLoaded 事件触发');
-    
+
     // 初始化主题（确保暗黑模式立即生效）
     initTheme();
-    
+
     // 检测网络连接
     if (!checkNetworkConnection()) {
         showNetworkError();
         hideLoading(); // 即使网络错误也要隐藏加载遮罩
         return;
     }
-    
+
+    // 检查是否有记住的登录状态
+    const rememberedUser = localStorage.getItem('rememberedUser');
+    if (rememberedUser) {
+        try {
+            const { username, password } = JSON.parse(rememberedUser);
+            console.log('找到记住的登录状态:', username);
+
+            // 自动登录
+            showLoading('正在恢复登录...');
+            const user = await window.electronAPI.login(username, password);
+            currentUser = user;
+
+            // 显示主应用
+            const loginContainer = document.getElementById('loginContainer');
+            const mainApp = document.getElementById('mainApp');
+            loginContainer.style.display = 'none';
+            mainApp.style.display = 'flex';
+
+            // 初始化主应用
+            await initMainApp();
+            hideLoading();
+            return;
+        } catch (error) {
+            console.log('自动登录失败，将显示登录界面:', error);
+            // 自动登录失败，清除保存的状态
+            localStorage.removeItem('rememberedUser');
+            hideLoading();
+        }
+    }
+
     // 显示登录界面
     showLoginScreen();
-    
+
     // 页面初始化完成，隐藏加载遮罩
     hideLoading();
 });
@@ -417,7 +475,10 @@ function logout() {
         registerUsernameInput.value = '';
         registerPasswordInput.value = '';
         registerConfirmPasswordInput.value = '';
-        
+
+        // 清除记住的登录状态
+        localStorage.removeItem('rememberedUser');
+
         showNotification('已退出登录');
     }
 }
@@ -535,7 +596,13 @@ async function showLoginScreen() {
                 
                 const user = await window.electronAPI.login(username, password);
                 currentUser = user;
-                
+
+                // 保存登录状态到 localStorage
+                localStorage.setItem('rememberedUser', JSON.stringify({
+                    username: username,
+                    password: password  // 如果需要记住密码
+                }));
+
                 // 初始化主应用（在隐藏加载遮罩前完成）
                 showNotification('登录成功！');
                 loginContainer.style.display = 'none';
@@ -574,44 +641,198 @@ async function showLoginScreen() {
     // 只绑定一次注册事件监听器
     if (!registerEventsBound && registerSubmitButton) {
         registerEventsBound = true;
-        
+
+        // ====== 滑块验证相关元素 ======
+        const captchaOverlay = document.getElementById('captchaOverlay');
+        const captchaClose = document.getElementById('captchaClose');
+        const sliderTrack = document.querySelector('.slider-track');
+        const sliderTarget = document.getElementById('sliderTarget');
+        const sliderThumb = document.getElementById('sliderThumb');
+        const captchaStatus = document.getElementById('captchaStatus');
+
+        // 初始化滑块验证
+        function initSliderCaptcha() {
+            const trackWidth = sliderTrack.offsetWidth;
+            const targetLeft = Math.random() * (trackWidth - 80) + 60;
+            sliderTarget.style.left = targetLeft + 'px';
+            sliderThumb.style.left = '4px';
+            sliderThumb.classList.remove('dragging');
+            captchaStatus.textContent = '';
+            captchaStatus.className = 'captcha-status';
+        }
+
+        // 显示滑块验证
+        function showCaptcha() {
+            initSliderCaptcha();
+            captchaOverlay.style.display = 'flex';
+        }
+
+        // 隐藏滑块验证
+        function hideCaptcha() {
+            captchaOverlay.style.display = 'none';
+            initSliderCaptcha();
+        }
+
+        // 滑块拖动逻辑
+        let isDragging = false;
+        let startX = 0;
+        let startLeft = 0;
+
+        sliderThumb.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            startX = e.clientX;
+            startLeft = parseInt(sliderThumb.style.left) || 4;
+            sliderThumb.classList.add('dragging');
+            captchaStatus.textContent = '拖动滑块到目标位置';
+            captchaStatus.className = 'captcha-status info';
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+
+        sliderThumb.addEventListener('touchstart', (e) => {
+            isDragging = true;
+            startX = e.touches[0].clientX;
+            startLeft = parseInt(sliderThumb.style.left) || 4;
+            sliderThumb.classList.add('dragging');
+            captchaStatus.textContent = '拖动滑块到目标位置';
+            captchaStatus.className = 'captcha-status info';
+
+            document.addEventListener('touchmove', onTouchMove);
+            document.addEventListener('touchend', onTouchEnd);
+        });
+
+        function onMouseMove(e) {
+            if (!isDragging) return;
+            updateSliderPosition(e.clientX);
+        }
+
+        function onMouseUp() {
+            finishDrag();
+        }
+
+        function onTouchMove(e) {
+            if (!isDragging) return;
+            updateSliderPosition(e.touches[0].clientX);
+        }
+
+        function onTouchEnd() {
+            finishDrag();
+        }
+
+        function updateSliderPosition(clientX) {
+            const trackWidth = sliderTrack.offsetWidth;
+            const maxLeft = trackWidth - 40;
+            const deltaX = clientX - startX;
+            let newLeft = startLeft + deltaX;
+
+            if (newLeft < 4) newLeft = 4;
+            if (newLeft > maxLeft) newLeft = maxLeft;
+
+            sliderThumb.style.left = newLeft + 'px';
+        }
+
+        function finishDrag() {
+            isDragging = false;
+            sliderThumb.classList.remove('dragging');
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+            document.removeEventListener('touchmove', onTouchMove);
+            document.removeEventListener('touchend', onTouchEnd);
+
+            // 验证是否成功
+            const thumbLeft = parseInt(sliderThumb.style.left);
+            const targetLeft = parseInt(sliderTarget.style.left);
+            const tolerance = 15;
+
+            if (Math.abs(thumbLeft - targetLeft) <= tolerance) {
+                // 验证成功
+                captchaStatus.textContent = '验证成功！';
+                captchaStatus.className = 'captcha-status success';
+                sliderThumb.style.background = '#28a745';
+
+                setTimeout(() => {
+                    hideCaptcha();
+                    // 验证成功后执行注册
+                    doRegister();
+                }, 500);
+            } else {
+                // 验证失败
+                captchaStatus.textContent = '验证失败，请重试';
+                captchaStatus.className = 'captcha-status error';
+
+                setTimeout(() => {
+                    initSliderCaptcha();
+                }, 1000);
+            }
+        }
+
+        // 关闭验证界面
+        captchaClose.addEventListener('click', () => {
+            hideCaptcha();
+        });
+
+        captchaOverlay.addEventListener('click', (e) => {
+            if (e.target === captchaOverlay) {
+                hideCaptcha();
+            }
+        });
+
+        // 注册表单数据
+        let pendingRegisterData = null;
+
         // ====== 注册按钮事件 ======
         registerSubmitButton.addEventListener('click', async (e) => {
             e.preventDefault();
-            
+
             const username = registerUsernameInput.value.trim();
             const password = registerPasswordInput.value;
             const confirmPassword = registerConfirmPasswordInput.value;
-            
+
             if (!username || !password || !confirmPassword) {
                 showNotification('请填写完整信息', 'error');
                 return;
             }
-            
+
             if (password.length < 6) {
                 showNotification('密码长度至少6位', 'error');
                 return;
             }
-            
+
             if (password !== confirmPassword) {
                 showNotification('两次输入的密码不一致', 'error');
                 return;
             }
-            
+
+            // 保存注册数据，准备进行验证
+            pendingRegisterData = { username, password };
+
+            // 显示滑块验证
+            showCaptcha();
+        });
+
+        // 执行注册
+        async function doRegister() {
+            if (!pendingRegisterData) return;
+
+            const { username, password } = pendingRegisterData;
+
             try {
                 registerSubmitButton.disabled = true;
                 registerSubmitButton.textContent = '注册中...';
-                
+
                 await window.electronAPI.register(username, password);
+
                 showNotification('注册成功，请登录！');
-                
+
                 // 清空注册表单，切换到登录界面
                 registerUsernameInput.value = '';
                 registerPasswordInput.value = '';
                 registerConfirmPasswordInput.value = '';
                 registerSubmitButton.disabled = false;
                 registerSubmitButton.textContent = '注册';
-                
+                pendingRegisterData = null;
+
                 // 把注册的用户名填到登录界面
                 loginUsernameInput.value = username;
                 showLogin();
@@ -620,11 +841,9 @@ async function showLoginScreen() {
                 showNotification('注册失败: ' + error.message, 'error');
                 registerSubmitButton.disabled = false;
                 registerSubmitButton.textContent = '注册';
-                registerUsernameInput.disabled = false;
-                registerPasswordInput.disabled = false;
-                registerConfirmPasswordInput.disabled = false;
+                pendingRegisterData = null;
             }
-        });
+        }
 
         // 注册界面回车键注册
         registerConfirmPasswordInput.addEventListener('keypress', (e) => {
@@ -633,7 +852,7 @@ async function showLoginScreen() {
                 registerSubmitButton.click();
             }
         });
-        
+
         // ====== 去登录链接 ======
         goToLoginLink.addEventListener('click', (e) => {
             e.preventDefault();
@@ -1047,11 +1266,17 @@ function setupEvents() {
                 // 检查文件是否被其他用户引用
                 const referencingUsers = await window.electronAPI.checkFileReferences(currentOperateId);
                 console.log('引用该文件的用户:', referencingUsers);
+                console.log('当前用户:', currentUser);
+                console.log('当前用户ID:', currentUser.id);
+                console.log('当前用户ID类型:', typeof currentUser.id);
+                console.log('referencingUsers[0]类型:', referencingUsers.length > 0 ? typeof referencingUsers[0] : 'undefined');
                 
-                const currentUserId = currentUser.id;
+                const currentUserId = String(currentUser.id); // 转为字符串用于比较
                 // 只有当没有其他用户引用（只有自己或没人引用）时，才删除源文件
                 const isOnlyOwner = referencingUsers.length === 0 || 
-                    (referencingUsers.length === 1 && referencingUsers[0] === currentUserId);
+                    (referencingUsers.length === 1 && String(referencingUsers[0]) === currentUserId);
+                console.log('isOnlyOwner:', isOnlyOwner);
+                console.log('字符串比较 - referencingUsers[0]:', String(referencingUsers[0]), ', currentUserId:', currentUserId);
                 
                 if (isOnlyOwner) {
                     // 只有当前用户引用该文件：删除源文件 + 从ownedfile移除
@@ -1074,9 +1299,10 @@ function setupEvents() {
                     // 调用删除API删除源文件
                     await window.electronAPI.deleteFile(fileName);
                     
-                    // 从当前用户的ownedfile中移除
+                    // 从当前用户的ownedfile中移除（转为字符串比较避免类型不匹配）
                     const userOwnedFileIds = getUserOwnedFileIds();
-                    const updatedFileIds = userOwnedFileIds.filter(id => !deletedIds.includes(id));
+                    const deletedIdsStr = deletedIds.map(id => String(id));
+                    const updatedFileIds = userOwnedFileIds.filter(id => !deletedIdsStr.includes(String(id)));
                     await updateUserOwnedFiles(updatedFileIds);
                     
                 } else {
@@ -1085,7 +1311,7 @@ function setupEvents() {
                     
                     // 从当前用户的ownedfile中移除
                     const userOwnedFileIds = getUserOwnedFileIds();
-                    const updatedFileIds = userOwnedFileIds.filter(id => id !== currentOperateId);
+                    const updatedFileIds = userOwnedFileIds.filter(id => String(id) !== String(currentOperateId));
                     await updateUserOwnedFiles(updatedFileIds);
                     
                     showNotification('已取消共享权限，源文件保留', 'info');
@@ -1600,10 +1826,16 @@ function setupNewItemModal() {
 }
 
 function setupFileUpload() {
+    // 检查是否已经添加过上传按钮，防止重复添加
+    if (document.querySelector('.upload-file-item')) {
+        console.log('上传文件按钮已存在，跳过重复添加');
+        return;
+    }
+    
     // 添加上传文件按钮到下拉菜单
     const newMenu = document.getElementById('newMenu');
     const uploadItem = document.createElement('button');
-    uploadItem.className = 'dropdown-item';
+    uploadItem.className = 'dropdown-item upload-file-item';  // 添加唯一类名用于检测
     uploadItem.innerHTML = '<i class="fa-solid fa-upload" style="width:20px;"></i> 上传文件';
     uploadItem.addEventListener('click', async function() {
         try {
@@ -1789,10 +2021,6 @@ function showReceiveModal() {
             const link = links[i].trim();
             await processShareLink(link, resultsList);
         }
-        
-        showNotification('批量处理完成！');
-        document.getElementById('modalSubmit').textContent = '关闭';
-        document.getElementById('modalSubmit').addEventListener('click', closeModal);
     });
 }
 
