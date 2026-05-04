@@ -1,4 +1,4 @@
-﻿let fileDataList = [];
+let fileDataList = [];
 let currentDirectory = 0; // 当前目录ID，0表示根目录
 let directoryPath = []; // 目录路径历史
 let isNavigating = false; // 防止快速点击导致的重复导航
@@ -1039,28 +1039,57 @@ function setupEvents() {
         }
         if (await showConfirmModal("确定要删除 <strong>" + fileName + "</strong> 吗？")) {
             try {
-                let deletedIds = [currentOperateId]; // 记录要删除的文件ID
+                // 获取当前用户
+                if (!currentUser) {
+                    await getCurrentUser();
+                }
                 
-                if (fileType === 'folder') {
-                    // 如果是文件夹，需要先获取所有子文件
-                    const response = await window.electronAPI.fetchFiles();
-                    if (response && response.data) {
-                        // 查找所有隶属该文件夹的文件
-                        const childFiles = response.data.filter(item => item.floder === currentOperateId);
-                        // 先删除所有子文件
-                        for (const child of childFiles) {
-                            await window.electronAPI.deleteFile(child.name);
-                            deletedIds.push(child.id);
+                // 检查文件是否被其他用户引用
+                const referencingUsers = await window.electronAPI.checkFileReferences(currentOperateId);
+                console.log('引用该文件的用户:', referencingUsers);
+                
+                const currentUserId = currentUser.id;
+                // 只有当没有其他用户引用（只有自己或没人引用）时，才删除源文件
+                const isOnlyOwner = referencingUsers.length === 0 || 
+                    (referencingUsers.length === 1 && referencingUsers[0] === currentUserId);
+                
+                if (isOnlyOwner) {
+                    // 只有当前用户引用该文件：删除源文件 + 从ownedfile移除
+                    console.log('只有当前用户引用该文件，删除源文件');
+                    
+                    let deletedIds = [currentOperateId];
+                    
+                    if (fileType === 'folder') {
+                        // 如果是文件夹，需要先获取所有子文件
+                        const response = await window.electronAPI.fetchFiles();
+                        if (response && response.data) {
+                            const childFiles = response.data.filter(item => item.floder === currentOperateId);
+                            for (const child of childFiles) {
+                                await window.electronAPI.deleteFile(child.name);
+                                deletedIds.push(child.id);
+                            }
                         }
                     }
+                    
+                    // 调用删除API删除源文件
+                    await window.electronAPI.deleteFile(fileName);
+                    
+                    // 从当前用户的ownedfile中移除
+                    const userOwnedFileIds = getUserOwnedFileIds();
+                    const updatedFileIds = userOwnedFileIds.filter(id => !deletedIds.includes(id));
+                    await updateUserOwnedFiles(updatedFileIds);
+                    
+                } else {
+                    // 有其他用户引用该文件：只从ownedfile移除，不删除源文件
+                    console.log('有其他用户引用该文件，只移除访问权限');
+                    
+                    // 从当前用户的ownedfile中移除
+                    const userOwnedFileIds = getUserOwnedFileIds();
+                    const updatedFileIds = userOwnedFileIds.filter(id => id !== currentOperateId);
+                    await updateUserOwnedFiles(updatedFileIds);
+                    
+                    showNotification('已取消共享权限，源文件保留', 'info');
                 }
-                // 调用删除API删除当前文件或文件夹
-                await window.electronAPI.deleteFile(fileName);
-                
-                // 更新用户的owned_file，移除已删除的文件ID
-                const userOwnedFileIds = getUserOwnedFileIds();
-                const updatedFileIds = userOwnedFileIds.filter(id => !deletedIds.includes(id));
-                await updateUserOwnedFiles(updatedFileIds);
                 
                 // 重新获取文件列表
                 await fetchFilesFromDatabase();

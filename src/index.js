@@ -1036,6 +1036,55 @@ function setupIpcHandlers() {
     }
   });
 
+  // 检查文件是否被其他用户引用（返回引用该文件的用户ID列表）
+  ipcMain.handle('file:checkFileReferences', async (event, fileId) => {
+    try {
+      const userUrl = 'https://data.520ai.cc/api/bases/bseloUQsS6clyMZgVMK/tables/AnIpKe3pqF/records';
+      const apiKey = 'PZs9PbId3FAWJkcSqauwQ3pA9Elcxj7LDMW6ddnQ';
+      
+      console.log('====================================');
+      console.log('检查文件引用:', fileId);
+      
+      // 获取所有用户
+      const response = await fetch(userUrl, {
+        method: 'GET',
+        headers: {
+          'x-bm-token': apiKey
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`获取用户列表失败: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      const users = data.data || [];
+      
+      // 查找引用该文件的用户
+      const referencingUsers = [];
+      for (const user of users) {
+        if (user.owned_file) {
+          let ownedFiles = [];
+          try {
+            ownedFiles = JSON.parse(user.owned_file);
+          } catch (e) {
+            ownedFiles = [];
+          }
+          if (ownedFiles.includes(fileId)) {
+            referencingUsers.push(user.id);
+          }
+        }
+      }
+      
+      console.log('引用该文件的用户:', referencingUsers);
+      console.log('====================================');
+      return referencingUsers;
+    } catch (error) {
+      console.error('检查文件引用失败:', error);
+      throw error;
+    }
+  });
+
   // 上传单个分片到数据块表格
   ipcMain.handle('chunk:upload', async (event, chunkData) => {
     try {

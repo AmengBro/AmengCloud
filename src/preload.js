@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   register: (username, password) => ipcRenderer.invoke('user:register', { username, password }),
   getCurrentUser: () => ipcRenderer.invoke('user:getCurrent'),
   updateOwnedFiles: (userId, ownedFile) => ipcRenderer.invoke('user:updateOwnedFiles', { userId, ownedFile }),
+  checkFileReferences: (fileId) => ipcRenderer.invoke('file:checkFileReferences', fileId),
   // 分片存储相关API
   uploadLargeFile: (params, totalChunks, updateProgress) => {
     // 监听进度事件
