@@ -14,11 +14,16 @@ module.exports = {
     },
     {
       name: '@electron-forge/maker-zip',
-      platforms: ['darwin'],
+      platforms: ['darwin', 'win32', 'linux'],
     },
     {
       name: '@electron-forge/maker-deb',
-      config: {},
+      config: {
+        options: {
+          maintainer: 'AmengBro',
+          homepage: 'https://github.com/your-repo',
+        }
+      },
     },
     {
       name: '@electron-forge/maker-rpm',
