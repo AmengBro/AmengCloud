@@ -1,10 +1,32 @@
 {
-  "name": "amengcloud",
-  "productName": "amengcloud",
-  "version": "1.0.0",
-  "description": "My Electron application description",
+  "name": "AmengCloud",
+  "productName": "AmengCloud",
+  "version": "1.2.0",
+  "description": "一个高效的云端文件管理应用",
   "main": "src/index.js",
   "private": true,
+  "config": {
+    "forge": {
+      "makers": [
+        {
+          "name": "@electron-forge/maker-deb",
+          "config": {
+            "options": {
+              "name": "com.amengcloud.app"
+            }
+          }
+        },
+        {
+          "name": "@electron-forge/maker-rpm",
+          "config": {
+            "options": {
+              "name": "com.amengcloud.app"
+            }
+          }
+        }
+      ]
+    }
+  },
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",

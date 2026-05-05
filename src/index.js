@@ -4,6 +4,16 @@ const fs = require('fs');
 const crypto = require('crypto');
 const https = require('https');
 
+// 获取头像存储目录
+function getAvatarDir() {
+  const userDataPath = app.getPath('userData');
+  const avatarDir = path.join(userDataPath, 'avatars');
+  if (!fs.existsSync(avatarDir)) {
+    fs.mkdirSync(avatarDir, { recursive: true });
+  }
+  return avatarDir;
+}
+
 function createWindow () {
   const mainWindow = new BrowserWindow({
     width: 1200,
@@ -18,6 +28,35 @@ function createWindow () {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
+
+  // 开发模式下自动打开开发者工具
+  if (process.env.NODE_ENV === 'development') {
+    mainWindow.webContents.openDevTools();
+  }
+
+  // 允许通过 F12 打开开发者工具
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'F12') {
+      event.preventDefault();
+      // 使用 try-catch 来处理不同 Electron 版本的 API 差异
+      try {
+        // 尝试使用 isDevToolsOpened (旧版本)
+        if (typeof mainWindow.webContents.isDevToolsOpened === 'function') {
+          if (mainWindow.webContents.isDevToolsOpened()) {
+            mainWindow.webContents.closeDevTools();
+          } else {
+            mainWindow.webContents.openDevTools();
+          }
+        } else {
+          // 直接打开/关闭，不检查状态
+          mainWindow.webContents.toggleDevTools();
+        }
+      } catch (e) {
+        // 如果都失败，直接尝试打开
+        mainWindow.webContents.openDevTools();
+      }
+    }
+  });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -988,6 +1027,86 @@ function setupIpcHandlers() {
     } catch (error) {
       console.error('获取当前用户失败:', error);
       throw error;
+    }
+  });
+
+  // 更新用户信息（昵称和头像）
+  ipcMain.handle('user:updateInfo', async (event, { userId, nick, photo }) => {
+    try {
+      const userUrl = 'https://data.520ai.cc/api/bases/bseloUQsS6clyMZgVMK/tables/AnIpKe3pqF/records';
+      const apiKey = 'PZs9PbId3FAWJkcSqauwQ3pA9Elcxj7LDMW6ddnQ';
+      
+      console.log('====================================');
+      console.log('更新用户信息 - 参数:');
+      console.log('userId:', userId);
+      console.log('nick:', nick);
+      console.log('photo:', photo ? '有头像数据' : '无头像数据');
+      
+      // 构建更新URL
+      const updateUrl = `${userUrl}/${userId}`;
+      console.log('更新URL:', updateUrl);
+      console.log('使用HTTPS:', updateUrl.startsWith('https://'));
+      
+      const updateData = {};
+      
+      if (nick !== undefined && nick !== null) {
+        updateData.nick = nick;
+      }
+      if (photo !== undefined && photo !== null) {
+        updateData.photo = photo;
+      }
+      
+      console.log('发送的数据:', JSON.stringify(updateData));
+      
+      const response = await fetch(updateUrl, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-bm-token': apiKey
+        },
+        body: JSON.stringify(updateData)
+      });
+      
+      console.log('响应状态:', response.status, response.statusText);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.log('响应内容:', errorText);
+        throw new Error(`更新用户信息失败: ${response.status} ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      console.log('更新用户信息成功:', result);
+      console.log('====================================');
+      return result;
+    } catch (error) {
+      console.error('更新用户信息失败:', error);
+      throw error;
+    }
+  });
+
+  // 获取预设头像路径（从photores目录）
+  ipcMain.handle('avatar:getPath', async (event, filename) => {
+    try {
+      if (!filename || !filename.trim()) {
+        return null; // 空值表示默认头像
+      }
+      
+      // 构建头像文件的完整路径
+      const avatarPath = path.join(__dirname, '../photores', filename);
+      console.log('头像路径:', avatarPath);
+      
+      // 检查文件是否存在
+      if (!fs.existsSync(avatarPath)) {
+        console.warn('头像文件不存在:', avatarPath);
+        return null;
+      }
+      
+      // 返回 file:// 协议路径，供前端使用
+      return 'file:///' + avatarPath.replace(/\\/g, '/');
+    } catch (error) {
+      console.error('获取头像路径失败:', error);
+      return null;
     }
   });
 

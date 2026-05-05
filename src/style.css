@@ -22,6 +22,16 @@
     --danger-color: #ff6161;
 }
 
+/* 用户资料按钮 */
+#userProfileBtn:hover {
+    transform: scale(1.02);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+#userProfileBtn:active {
+    transform: scale(0.98);
+}
+
 :root[data-theme="light"] {
     --bg-color: #f0f2f5;
     --card-color: #ffffff;
@@ -546,6 +556,39 @@ body {
 
 .btn-danger:hover {
     background-color: #c82333;
+}
+
+.user-center-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 14px 20px;
+    background: transparent;
+    border: none;
+    color: var(--text-color);
+    font-size: 14px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.user-center-item:hover {
+    background-color: var(--hover-bg);
+}
+
+.user-center-item i:first-child {
+    width: 20px;
+    color: var(--text-secondary);
+}
+
+.user-center-item span {
+    flex: 1;
+    text-align: left;
+}
+
+.user-center-item i:last-child {
+    color: var(--text-secondary);
+    font-size: 12px;
 }
 
 .file-list-container {

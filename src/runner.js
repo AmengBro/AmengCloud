@@ -4,6 +4,11 @@ let directoryPath = []; // 目录路径历史
 let isNavigating = false; // 防止快速点击导致的重复导航
 let currentUser = null; // 当前用户信息
 
+// 应用版本常量
+const APP_VERSION = '1.2.0';
+const APP_NAME = 'AmengCloud';
+const APP_DESCRIPTION = '一个高效的云端文件管理应用';
+
 // 分片存储常量
 const CHUNK_SIZE = 32768; // 32KB（与主进程一致，测试得出Chunks表name字段最大约40KB）
 
@@ -410,8 +415,11 @@ document.addEventListener('DOMContentLoaded', async function() {
             mainApp.style.display = 'flex';
 
             // 初始化主应用
-            await initMainApp();
-            hideLoading();
+            try {
+                await initMainApp();
+            } finally {
+                hideLoading();
+            }
             return;
         } catch (error) {
             console.log('自动登录失败，将显示登录界面:', error);
@@ -428,21 +436,420 @@ document.addEventListener('DOMContentLoaded', async function() {
     hideLoading();
 });
 
-// 更新用户名显示
+// 更新用户名显示（优先显示昵称）
 function updateUsernameDisplay() {
     const usernameSpan = document.getElementById('currentUsername');
     if (usernameSpan && currentUser) {
-        const username = currentUser.username || currentUser.Username || '用户';
-        usernameSpan.textContent = username;
+        // 如果没有设置昵称，默认显示为当前用户名
+        const nickname = currentUser.nick || currentUser.username || currentUser.Username || '用户';
+        usernameSpan.textContent = nickname;
     }
 }
 
 // 退出登录
+// 用户中心模态框
+async function showUserCenterModal() {
+    console.log('showUserCenterModal 被调用');
+    const userCenterModalOverlay = document.createElement('div');
+    userCenterModalOverlay.className = 'modal-overlay active';
+    userCenterModalOverlay.style.display = 'flex';
+    
+    const userCenterModal = document.createElement('div');
+    userCenterModal.className = 'modal';
+    userCenterModal.style.maxWidth = '380px';
+    
+    // 获取用户名和昵称
+    const username = currentUser?.Username || currentUser?.username || '用户';
+    const nickname = currentUser?.nick || username;
+    
+    // 构建显示名称：昵称(用户名)
+    const displayName = nickname === username ? username : `${nickname}(${username})`;
+    
+    // 获取头像路径
+    let avatarStyle = 'background: var(--primary-color);';
+    let avatarContent = '<i class="fa-solid fa-user" style="font-size: 32px; color: white;"></i>';
+    if (currentUser?.photo && currentUser.photo.trim()) {
+        const avatarPath = await window.electronAPI.getAvatarPath(currentUser.photo);
+        if (avatarPath) {
+            avatarStyle = `background: url(${avatarPath}) center/cover;`;
+            avatarContent = '';
+        }
+    }
+    
+    userCenterModal.innerHTML = `
+        <div class="modal-header">
+            <h3>用户中心</h3>
+            <button class="modal-close" id="userCenterModalClose">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+        <div class="modal-body" style="padding: 0;">
+            <div style="text-align: center; padding: 24px 20px; border-bottom: 1px solid var(--border-color);">
+                <div style="width: 72px; height: 72px; border-radius: 50%; ${avatarStyle} display: inline-flex; align-items: center; justify-content: center; margin-bottom: 12px;">
+                    ${avatarContent}
+                </div>
+                <h4 style="margin: 0 0 4px 0;">${displayName}</h4>
+                <p style="margin: 0; font-size: 13px; color: var(--text-secondary);">欢迎使用 AmengCloud</p>
+            </div>
+            <div style="padding: 12px 0;">
+                <button class="user-center-item" id="userCenterSettings">
+                    <i class="fa-solid fa-gear"></i>
+                    <span>设置</span>
+                    <i class="fa-solid fa-chevron-right" style="margin-left: auto;"></i>
+                </button>
+                <button class="user-center-item" id="userCenterAbout">
+                    <i class="fa-solid fa-circle-info"></i>
+                    <span>关于</span>
+                    <i class="fa-solid fa-chevron-right" style="margin-left: auto;"></i>
+                </button>
+            </div>
+            <div style="padding: 16px 20px; border-top: 1px solid var(--border-color);">
+                <button class="btn btn-danger" id="userCenterLogout" style="width: 100%;">
+                    <i class="fa-solid fa-right-from-bracket"></i>
+                    退出登录
+                </button>
+            </div>
+        </div>
+    `;
+    
+    userCenterModalOverlay.appendChild(userCenterModal);
+    document.body.appendChild(userCenterModalOverlay);
+    console.log('用户中心模态框已添加到页面');
+    
+    const closeModal = () => {
+        document.body.removeChild(userCenterModalOverlay);
+    };
+    
+    document.getElementById('userCenterModalClose').addEventListener('click', closeModal);
+    userCenterModalOverlay.addEventListener('click', (e) => {
+        if (e.target === userCenterModalOverlay) closeModal();
+    });
+    
+    document.getElementById('userCenterLogout').addEventListener('click', () => {
+        closeModal();
+        logout();
+    });
+    
+    document.getElementById('userCenterSettings').addEventListener('click', () => {
+        closeModal();
+        showSettingsModal();
+    });
+    
+    document.getElementById('userCenterAbout').addEventListener('click', () => {
+        showAboutModal();
+    });
+}
+
+// 显示关于模态框
+function showAboutModal() {
+    const aboutModalOverlay = document.createElement('div');
+    aboutModalOverlay.className = 'modal-overlay active';
+    aboutModalOverlay.style.display = 'flex';
+    
+    const aboutModal = document.createElement('div');
+    aboutModal.className = 'modal';
+    aboutModal.style.maxWidth = '360px';
+    aboutModal.style.textAlign = 'center';
+    
+    aboutModal.innerHTML = `
+        <div class="modal-header">
+            <h3>关于</h3>
+            <button class="modal-close" id="aboutModalClose">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+        <div class="modal-body" style="padding: 32px 24px;">
+            <div style="width: 80px; height: 80px; border-radius: 16px; background: linear-gradient(135deg, var(--primary-color), var(--primary-hover)); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; box-shadow: 0 8px 24px rgba(0,0,0,0.15);">
+                <i class="fa-solid fa-cloud" style="font-size: 36px; color: white;"></i>
+            </div>
+            <h2 style="margin: 0 0 8px 0; font-size: 24px; font-weight: 600;">${APP_NAME}</h2>
+            <p style="margin: 0 0 16px 0; color: var(--text-secondary); font-size: 14px;">${APP_DESCRIPTION}</p>
+            <div style="background: var(--bg-secondary); border-radius: 8px; padding: 12px 20px; margin-bottom: 20px;">
+                <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 4px;">版本号</div>
+                <div style="font-size: 16px; font-weight: 500;">v${APP_VERSION}</div>
+            </div>
+            <p style="margin: 0; font-size: 12px; color: var(--text-secondary);">
+                版权所有 2024-2026 ${APP_NAME} Team
+            </p>
+        </div>
+        <div class="modal-footer" style="justify-content: center; border-top: 1px solid var(--border-color); padding: 16px;">
+            <button class="btn btn-primary" id="aboutCloseBtn" style="min-width: 120px;">确定</button>
+        </div>
+    `;
+    
+    aboutModalOverlay.appendChild(aboutModal);
+    document.body.appendChild(aboutModalOverlay);
+    
+    const closeAboutModal = () => {
+        document.body.removeChild(aboutModalOverlay);
+    };
+    
+    document.getElementById('aboutModalClose').addEventListener('click', closeAboutModal);
+    document.getElementById('aboutCloseBtn').addEventListener('click', closeAboutModal);
+    aboutModalOverlay.addEventListener('click', (e) => {
+        if (e.target === aboutModalOverlay) closeAboutModal();
+    });
+}
+
+// 压缩图片并转换为base64
+async function compressImage(file, maxWidth = 200, maxHeight = 200, quality = 0.7) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+                // 计算缩放比例
+                let width = img.width;
+                let height = img.height;
+                
+                if (width > maxWidth) {
+                    const scale = maxWidth / width;
+                    width = maxWidth;
+                    height = height * scale;
+                }
+                
+                if (height > maxHeight) {
+                    const scale = maxHeight / height;
+                    height = maxHeight;
+                    width = width * scale;
+                }
+                
+                // 创建canvas并绘制压缩后的图片
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                
+                // 将canvas转换为base64
+                const base64 = canvas.toDataURL('image/jpeg', quality);
+                resolve(base64);
+            };
+            
+            img.onerror = () => reject(new Error('图片加载失败'));
+            img.src = e.target.result;
+        };
+        
+        reader.onerror = () => reject(new Error('文件读取失败'));
+        reader.readAsDataURL(file);
+    });
+}
+
+// 设置界面模态框
+async function showSettingsModal() {
+    const settingsModalOverlay = document.createElement('div');
+    settingsModalOverlay.className = 'modal-overlay active';
+    settingsModalOverlay.style.display = 'flex';
+    
+    const settingsModal = document.createElement('div');
+    settingsModal.className = 'modal';
+    settingsModal.style.maxWidth = '500px';
+    
+    // 获取用户当前的昵称和头像
+    const username = currentUser?.Username || currentUser?.username || '用户';
+    const nickname = currentUser?.nick || username;
+    const currentPhoto = currentUser?.photo || ''; // 空字符串表示默认头像
+    
+    // 获取所有预设头像的路径
+    const presetAvatars = [
+        { filename: '', name: '默认' },        // 默认头像（空字符串）
+        { filename: '1.jpeg', name: '头像1' },
+        { filename: '2.jpg', name: '头像2' },
+        { filename: '3.png', name: '头像3' },
+        { filename: '4.png', name: '头像4' },
+        { filename: '5.png', name: '头像5' },
+        { filename: '6.png', name: '头像6' },
+        { filename: '7.png', name: '头像7' },
+        { filename: '8.png', name: '头像8' },
+        { filename: '9.png', name: '头像9' },
+        { filename: '10.jpg', name: '头像10' },
+    ];
+    
+    // 预先获取所有头像路径
+    const avatarPaths = {};
+    for (const avatar of presetAvatars) {
+        if (avatar.filename) {
+            avatarPaths[avatar.filename] = await window.electronAPI.getAvatarPath(avatar.filename);
+        }
+    }
+    
+    settingsModal.innerHTML = `
+        <div class="modal-header">
+            <h3>设置</h3>
+            <button class="modal-close" id="settingsModalClose">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+        <div class="modal-body">
+            <!-- 头像设置 -->
+            <div class="form-group" style="margin-bottom: 24px;">
+                <label style="display: block; margin-bottom: 12px; font-weight: 500;">头像</label>
+                <div id="avatarSelector" style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px;">
+                    <!-- 预设头像将在这里动态生成 -->
+                </div>
+            </div>
+            
+            <!-- 昵称设置 -->
+            <div class="form-group">
+                <label for="settingsNickname">昵称</label>
+                <input type="text" id="settingsNickname" class="form-input" placeholder="请输入昵称" value="${nickname}">
+            </div>
+            
+            <!-- 保存按钮 -->
+            <div style="display: flex; gap: 12px; margin-top: 24px;">
+                <button class="btn btn-secondary" id="settingsCancel" style="flex: 1;">
+                    取消
+                </button>
+                <button class="btn btn-primary" id="settingsSave" style="flex: 1;">
+                    保存
+                </button>
+            </div>
+        </div>
+    `;
+    
+    settingsModalOverlay.appendChild(settingsModal);
+    document.body.appendChild(settingsModalOverlay);
+    
+    let selectedAvatar = currentPhoto; // 保存选中的头像文件名
+    
+    // 渲染预设头像选择器
+    const avatarSelector = document.getElementById('avatarSelector');
+    presetAvatars.forEach(avatar => {
+        const avatarItem = document.createElement('div');
+        avatarItem.style.width = '64px';
+        avatarItem.style.height = '64px';
+        avatarItem.style.borderRadius = '50%';
+        avatarItem.style.cursor = 'pointer';
+        avatarItem.style.transition = 'all 0.2s';
+        avatarItem.style.border = avatar.filename === currentPhoto ? '3px solid var(--primary-color)' : '2px solid transparent';
+        
+        if (avatar.filename && avatarPaths[avatar.filename]) {
+            avatarItem.style.background = `url(${avatarPaths[avatar.filename]}) center/cover`;
+        } else {
+            avatarItem.style.background = 'var(--primary-color)';
+            // 默认头像显示用户图标
+            avatarItem.innerHTML = '<i class="fa-solid fa-user" style="font-size: 24px; color: white; display: flex; align-items: center; justify-content: center; height: 100%;"></i>';
+        }
+        
+        avatarItem.title = avatar.name;
+        
+        // 悬停效果
+        avatarItem.addEventListener('mouseenter', () => {
+            avatarItem.style.transform = 'scale(1.1)';
+            avatarItem.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+        });
+        
+        avatarItem.addEventListener('mouseleave', () => {
+            avatarItem.style.transform = 'scale(1)';
+            avatarItem.style.boxShadow = 'none';
+        });
+        
+        // 点击选择
+        avatarItem.addEventListener('click', () => {
+            // 取消其他选中状态
+            avatarSelector.querySelectorAll('div').forEach(item => {
+                item.style.border = '2px solid transparent';
+            });
+            // 设置当前选中状态
+            avatarItem.style.border = '3px solid var(--primary-color)';
+            selectedAvatar = avatar.filename;
+        });
+        
+        avatarSelector.appendChild(avatarItem);
+    });
+    
+    const closeModal = () => {
+        document.body.removeChild(settingsModalOverlay);
+    };
+    
+    document.getElementById('settingsModalClose').addEventListener('click', closeModal);
+    settingsModalOverlay.addEventListener('click', (e) => {
+        if (e.target === settingsModalOverlay) closeModal();
+    });
+    
+    // 取消按钮
+    document.getElementById('settingsCancel').addEventListener('click', closeModal);
+    
+    // 保存按钮
+    document.getElementById('settingsSave').addEventListener('click', async () => {
+        const nickname = document.getElementById('settingsNickname').value.trim();
+        
+        if (!nickname) {
+            showNotification('请输入昵称', 'error');
+            return;
+        }
+        
+        try {
+            // 获取当前用户ID
+            const userId = currentUser?.id || currentUser?.Id || currentUser?.record_id;
+            console.log('当前用户ID:', userId);
+            
+            // 调用后端API更新用户数据（只传文件名或空字符串）
+            await window.electronAPI.updateUserInfo(userId, nickname, selectedAvatar);
+            
+            // 更新当前用户信息
+            currentUser.nick = nickname;
+            currentUser.photo = selectedAvatar;
+            
+            // 更新界面显示
+            updateUsernameDisplay();
+            await updateUserAvatar();
+            
+            showNotification('设置已保存', 'success');
+            closeModal();
+        } catch (error) {
+            console.error('保存设置失败:', error);
+            showNotification('保存失败: ' + error.message, 'error');
+        }
+    });
+}
+
+// 更新用户名显示
+function updateUsernameDisplay() {
+    const usernameSpan = document.getElementById('currentUsername');
+    if (usernameSpan && currentUser) {
+        const nickname = currentUser.nick || currentUser.username || currentUser.Username || '用户';
+        usernameSpan.textContent = nickname;
+    }
+}
+
+// 更新用户头像显示
+async function updateUserAvatar() {
+    const userAvatar = document.getElementById('userAvatar');
+    if (userAvatar && currentUser) {
+        const photo = currentUser.photo;
+        
+        if (photo && photo.trim()) {
+            // 使用预设头像，从主进程获取路径
+            const avatarPath = await window.electronAPI.getAvatarPath(photo);
+            if (avatarPath) {
+                userAvatar.style.background = `url(${avatarPath}) center/cover`;
+                userAvatar.innerHTML = '';
+            } else {
+                // 路径获取失败，显示默认头像
+                userAvatar.style.background = 'rgba(255,255,255,0.2)';
+                userAvatar.innerHTML = '<i class="fa-solid fa-user" style="font-size: 14px; color: white;"></i>';
+            }
+        } else {
+            // 默认头像
+            userAvatar.style.background = 'rgba(255,255,255,0.2)';
+            userAvatar.innerHTML = '<i class="fa-solid fa-user" style="font-size: 14px; color: white;"></i>';
+        }
+    }
+}
+
 function logout() {
     console.log('logout 函数被调用');
     currentUser = null;
     currentDirectory = 0; // 重置为根目录
     directoryPath = []; // 重置路径
+    
+    // 重置事件绑定标志
+    loginEventsBound = false;
+    registerEventsBound = false;
+    
     const loginContainer = document.getElementById('loginContainer');
     const registerContainer = document.getElementById('registerContainer');
     const mainApp = document.getElementById('mainApp');
@@ -479,6 +886,9 @@ function logout() {
         // 清除记住的登录状态
         localStorage.removeItem('rememberedUser');
 
+        // 确保隐藏加载遮罩
+        hideLoading();
+
         showNotification('已退出登录');
     }
 }
@@ -487,6 +897,7 @@ function logout() {
 async function initMainApp() {
     try {
         updateUsernameDisplay();
+        await updateUserAvatar(); // 恢复await
         await fetchFilesFromDatabase();
         setupEvents();
         initTheme();
@@ -496,10 +907,14 @@ async function initMainApp() {
         setupFileUpload();
         initTransferQueue();
         
-        // 绑定用户中心按钮（退出登录）
-        const userCenterBtn = document.getElementById('userCenterBtn');
-        if (userCenterBtn) {
-            userCenterBtn.addEventListener('click', logout);
+        // 绑定用户资料按钮点击事件（打开用户中心）
+        const userProfileBtn = document.getElementById('userProfileBtn');
+        console.log('userProfileBtn 元素:', userProfileBtn);
+        if (userProfileBtn) {
+            userProfileBtn.addEventListener('click', showUserCenterModal);
+            console.log('用户资料按钮点击事件已绑定');
+        } else {
+            console.error('找不到 userProfileBtn 元素');
         }
     } catch (error) {
         console.error('初始化主应用失败:', error);
@@ -607,10 +1022,13 @@ async function showLoginScreen() {
                 showNotification('登录成功！');
                 loginContainer.style.display = 'none';
                 mainApp.style.display = 'flex';
-                await initMainApp();
                 
-                // 隐藏加载遮罩
-                hideLoading();
+                try {
+                    await initMainApp();
+                } finally {
+                    // 隐藏加载遮罩
+                    hideLoading();
+                }
             } catch (error) {
                 console.error('登录失败:', error);
                 showNotification('登录失败: ' + error.message, 'error');
@@ -906,15 +1324,25 @@ async function fetchFilesFromDatabase() {
                 
                 // 提取文件扩展名（仅对文件）
                 const ext = !isFolder ? item.name.split('.').pop() : undefined;
-                // 格式化日期
-                const date = new Date().toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
+                // 格式化日期时间（从数据库的updated_at字段读取）
+                const updateTime = item.updated_at || item.updatedAt || item.created_at || item.createdAt;
+                const date = updateTime ? new Date(updateTime).toLocaleString('zh-CN', { 
+                    month: 'numeric', 
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                }) : new Date().toLocaleString('zh-CN', { 
+                    month: 'numeric', 
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
                 
                 return {
                     id: item.id, // 使用数据库中的实际ID
                     name: item.name,
                     type: isFolder ? 'folder' : 'file',
                     ext: ext,
-                    author: "A萌菌",
                     date: date,
                     floder: item.floder || 0 // 存储隶属的文件夹ID
                 };
@@ -944,8 +1372,8 @@ async function fetchFilesFromDatabase() {
         } else {
             // 如果没有数据，使用默认数据
             fileDataList = [
-                { id: 1, name: "熊大快跑", type: "folder", author: "A萌菌", date: "3月8日", floder: 0 },
-                { id: 2, name: "Linkboy_setup.exe", type: "file", ext: "exe", author: "A萌菌", date: "3月8日", floder: 0 }
+                { id: 1, name: "熊大快跑", type: "folder", date: "3/8 00:00", floder: 0 },
+                { id: 2, name: "Linkboy_setup.exe", type: "file", ext: "exe", date: "3/8 00:00", floder: 0 }
             ];
             
             // 根据当前目录过滤文件
@@ -958,8 +1386,8 @@ async function fetchFilesFromDatabase() {
         console.error('获取文件列表失败:', error);
         // 使用默认数据
         fileDataList = [
-            { id: 1, name: "熊大快跑", type: "folder", author: "A萌菌", date: "3月8日", floder: 0 },
-            { id: 2, name: "Linkboy_setup.exe", type: "file", ext: "exe", author: "A萌菌", date: "3月8日", floder: 0 }
+            { id: 1, name: "熊大快跑", type: "folder", date: "3/8 00:00", floder: 0 },
+            { id: 2, name: "Linkboy_setup.exe", type: "file", ext: "exe", date: "3/8 00:00", floder: 0 }
         ];
         
         // 根据当前目录过滤文件
@@ -1010,11 +1438,10 @@ function refreshUi() {
                 ${iconHtml}
                 <div>
                     <div class="file-name">${data.name}</div>
-                    <div class="file-meta">上传者 ${data.author}</div>
                 </div>
             </div>
             <div class="file-actions">
-                <span>${data.date} 由 ${data.author}</span>
+                <span>${data.date}</span>
                 <div class="menu-btn" onclick="showMenu(event, ${data.id})">
                     <i class="fa-solid fa-ellipsis"></i>
                 </div>
@@ -1040,6 +1467,9 @@ function refreshUi() {
                 } finally {
                     isNavigating = false;
                 }
+            } else if (data.type === 'file') {
+                // 如果是文件，显示文件详情
+                await showFileDetails(data.id);
             }
         });
         
@@ -1051,6 +1481,99 @@ function refreshUi() {
             itemDiv.style.transform = 'translateX(0)';
         }, 50 + i * 80);
     }
+}
+
+// 显示文件详情模态框
+async function showFileDetails(fileId) {
+    // 从fileDataList中查找文件信息
+    let fileName = '';
+    let fileType = '';
+    for (let i = 0; i < fileDataList.length; i++) {
+        if (fileDataList[i].id === fileId) {
+            fileName = fileDataList[i].name;
+            fileType = fileDataList[i].type;
+            break;
+        }
+    }
+    
+    // 获取文件的详细信息
+    let fileDetails = null;
+    try {
+        const response = await window.electronAPI.fetchFiles();
+        if (response && response.data) {
+            fileDetails = response.data.find(item => item.name === fileName);
+        }
+    } catch (error) {
+        console.error('获取文件详情失败:', error);
+    }
+    
+    // 显示详情模态框
+    const modalOverlay = document.getElementById('modalOverlay');
+    const modal = document.getElementById('modal');
+    modalOverlay.classList.add('active');
+    
+    // 修改模态框内容为文件详情
+    modal.innerHTML = `
+        <div class="modal-header">
+            <h3>文件详情</h3>
+            <button class="modal-close" id="modalClose">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>文件名</label>
+                <div class="form-input readonly">${fileName}</div>
+            </div>
+            <div class="form-group">
+                <label>类型</label>
+                <div class="form-input readonly">文件</div>
+            </div>
+            <div class="form-group">
+                <label>大小</label>
+                <div class="form-input readonly">${(() => {
+                    try {
+                        const chunkIds = fileDetails && fileDetails.base64 ? JSON.parse(fileDetails.base64) : null;
+                        if (Array.isArray(chunkIds)) {
+                            const chunkCount = chunkIds.length;
+                            const sizeInKB = chunkCount * 32;
+                            return `${chunkCount} 个分片 (${sizeInKB} KB)`;
+                        }
+                        return fileDetails && fileDetails.base64 ? Math.round(fileDetails.base64.length * 3 / 4 / 1024) + ' KB' : '未知';
+                    } catch (e) {
+                        return '未知';
+                    }
+                })()}</div>
+            </div>
+            <div class="form-group">
+                <label>SHA256</label>
+                <div class="form-input readonly" style="font-family: monospace; font-size: 12px; word-break: break-all;">${fileDetails ? fileDetails.sha256 : '未知'}</div>
+            </div>
+            <div class="form-group">
+                <label>上传时间</label>
+                <div class="form-input readonly">${fileDetails && fileDetails.created_at ? new Date(fileDetails.created_at).toLocaleString('zh-CN') : '未知'}</div>
+            </div>
+            <div class="form-group">
+                <label>修改时间</label>
+                <div class="form-input readonly">${fileDetails && fileDetails.updated_at ? new Date(fileDetails.updated_at).toLocaleString('zh-CN') : '未知'}</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" id="modalCloseBtn">关闭</button>
+        </div>
+    `;
+    
+    // 关闭模态框函数
+    function closeModal() {
+        modalOverlay.classList.remove('active');
+    }
+    
+    // 关闭按钮事件
+    document.getElementById('modalClose').addEventListener('click', closeModal);
+    document.getElementById('modalCloseBtn').addEventListener('click', closeModal);
+    modalOverlay.addEventListener('click', function(e) {
+        if (e.target === modalOverlay) closeModal();
+    });
 }
 
 // 更新路径导航
@@ -1391,7 +1914,7 @@ function setupEvents() {
                 `;
                 
                 const savedPath = localStorage.getItem('defaultDownloadPath');
-                const defaultPath = (savedPath && savedPath.length >= 3 && /^[a-zA-Z]:[\\\/]/.test(savedPath)) ? savedPath : '';
+                const defaultPath = (savedPath && savedPath.length >= 3 && (savedPath.startsWith('/') || /^[a-zA-Z]:[\\\/]/.test(savedPath))) ? savedPath : '';
                 document.getElementById('savePath').value = defaultPath;
                 
                 document.getElementById('browseButton').addEventListener('click', async function() {
@@ -1419,9 +1942,10 @@ function setupEvents() {
                         return;
                     }
                     
-                    // 验证路径格式
-                    if (!/^[a-zA-Z]:[\\\/]?/.test(savePath)) {
-                        showNotification('请输入有效的路径，如 C:\\Downloads', 'error');
+                    // 验证路径格式（支持 Windows 和 Linux/macOS 路径）
+                    const isValidPath = savePath.startsWith('/') || /^[a-zA-Z]:[\\\/]/.test(savePath);
+                    if (!isValidPath) {
+                        showNotification('请输入有效的路径', 'error');
                         return;
                     }
                     
@@ -1429,7 +1953,9 @@ function setupEvents() {
                         localStorage.setItem('defaultDownloadPath', savePath);
                     }
                     
-                    const fullPath = savePath.endsWith('\\') || savePath.endsWith('/') ? savePath + fileName : savePath + '\\' + fileName;
+                    // 使用 path.sep 进行跨平台路径拼接
+                    const pathSep = savePath.endsWith('\\') || savePath.endsWith('/') ? '' : (savePath.includes('/') ? '/' : '\\');
+                    const fullPath = savePath + pathSep + fileName;
                     
                     // 直接下载，不使用队列
                     modal.innerHTML = `
@@ -2367,13 +2893,15 @@ function addToDownloadQueue(fileName) {
     
     // 获取文件保存路径
     const savedPath = localStorage.getItem('defaultDownloadPath');
-    let defaultPath = 'C:\\Users\\Public\\Downloads';
-    if (savedPath && savedPath.length >= 3 && /^[a-zA-Z]:[\\\/]/.test(savedPath)) {
-        defaultPath = savedPath;
-    }
-    const savePath = defaultPath.endsWith('\\') || defaultPath.endsWith('/') 
-        ? defaultPath + fileName 
-        : defaultPath + '\\' + fileName;
+    // 跨平台默认路径
+    const isWindows = savedPath && /^[a-zA-Z]:[\\\/]/.test(savedPath);
+    const defaultPath = (savedPath && savedPath.length >= 3 && (savedPath.startsWith('/') || isWindows))
+        ? savedPath
+        : (process.platform === 'win32' ? 'C:\\Users\\Public\\Downloads' : '/tmp/AmengCloud');
+    
+    // 使用 path.sep 或手动判断进行跨平台路径拼接
+    const pathSep = defaultPath.endsWith('\\') || defaultPath.endsWith('/') ? '' : (defaultPath.includes('/') ? '/' : '\\');
+    const savePath = defaultPath + pathSep + fileName;
     
     // 添加到队列
     const task = {
@@ -2739,8 +3267,7 @@ async function addNewItem(type, name) {
         id: newId,
         name: name,
         type: type,
-        author: "A萌菌",
-        date: new Date().toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+        date: new Date().toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     };
     
     if (type === 'file') {

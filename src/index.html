@@ -133,8 +133,11 @@
                         <span class="path-item active" data-id="0">根目录</span>
                     </div>
                 </div>
-                <div style="display:flex; align-items:center; gap:16px;">
-                    <span id="currentUsername">用户</span>
+                <div id="userProfileBtn" style="display:flex; align-items:center; gap:10px; padding: 8px 14px; border-radius: 20px; background: var(--primary-color); cursor: pointer; transition: all 0.2s; min-width: 80px;">
+                    <div id="userAvatar" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center;">
+                        <i class="fa-solid fa-user" style="font-size: 14px; color: white;"></i>
+                    </div>
+                    <span id="currentUsername" style="color: white; font-size: 14px; font-weight: 500; white-space: nowrap;">用户</span>
                 </div>
             </div>
 
@@ -192,7 +195,6 @@
 
         <!-- 右侧边栏 -->
         <div class="right-bar card">
-            <div class="icon-btn" id="userCenterBtn"><i class="fa-solid fa-circle-info"></i></div>
             <div style="margin-top:auto; margin-bottom:20px;">
                 <div class="icon-btn" id="themeToggle">
                     <i class="fa-solid fa-moon" id="themeIcon"></i>
