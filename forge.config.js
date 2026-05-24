@@ -20,14 +20,32 @@ module.exports = {
       name: '@electron-forge/maker-deb',
       config: {
         options: {
+          name: 'amengcloud',
+          productName: 'AmengCloud',
+          desktopName: 'com.amengcloud.app',
+          genericName: 'Cloud Storage',
+          description: '一个高效的云端文件管理应用',
           maintainer: 'AmengBro',
           homepage: 'https://github.com/your-repo',
+          icon: './icon.png',
+          depends: ['libgtk-3-0', 'libnotify4', 'libnss3', 'libxss1', 'libxtst6', 'xdg-utils', 'libatspi2.0-0', 'libuuid1', 'libsecret-1-0'],
         }
       },
     },
     {
       name: '@electron-forge/maker-rpm',
-      config: {},
+      config: {
+        options: {
+          name: 'amengcloud',
+          productName: 'AmengCloud',
+          desktopName: 'com.amengcloud.app',
+          genericName: 'Cloud Storage',
+          description: '一个高效的云端文件管理应用',
+          homepage: 'https://github.com/your-repo',
+          icon: './icon.png',
+          requires: ['gtk3', 'libnotify', 'nss', 'libXScrnSaver', 'libXtst', 'xdg-utils', 'at-spi2-core', 'libuuid', 'libsecret'],
+        }
+      },
     },
   ],
   plugins: [
