@@ -5,7 +5,7 @@ let isNavigating = false; // 防止快速点击导致的重复导航
 let currentUser = null; // 当前用户信息
 
 // 应用版本常量
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.2';
 const APP_NAME = 'AmengCloud';
 const APP_DESCRIPTION = '一个高效的云端文件管理应用';
 
@@ -559,8 +559,8 @@ function showAboutModal() {
             </button>
         </div>
         <div class="modal-body" style="padding: 32px 24px;">
-            <div style="width: 80px; height: 80px; border-radius: 16px; background: linear-gradient(135deg, var(--primary-color), var(--primary-hover)); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; box-shadow: 0 8px 24px rgba(0,0,0,0.15);">
-                <i class="fa-solid fa-cloud" style="font-size: 36px; color: white;"></i>
+            <div style="width: 80px; height: 80px; border-radius: 16px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.15);">
+                <img src="../icon.png" alt="${APP_NAME}" style="width: 100%; height: 100%; object-fit: contain;">
             </div>
             <h2 style="margin: 0 0 8px 0; font-size: 24px; font-weight: 600;">${APP_NAME}</h2>
             <p style="margin: 0 0 16px 0; color: var(--text-secondary); font-size: 14px;">${APP_DESCRIPTION}</p>

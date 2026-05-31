@@ -1,7 +1,7 @@
 {
   "name": "AmengCloud",
   "productName": "AmengCloud",
-  "version": "1.2.0",
+  "version": "1.2.2",
   "description": "一个高效的云端文件管理应用",
   "main": "src/index.js",
   "private": true,
