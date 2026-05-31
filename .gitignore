@@ -93,3 +93,5 @@ out/
 AmengCloud.7z
 AmengCloud.7z
 AmengCloud.zip
+*.rpm
+*.deb

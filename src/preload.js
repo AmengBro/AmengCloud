@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getCurrentUser: () => ipcRenderer.invoke('user:getCurrent'),
   updateOwnedFiles: (userId, ownedFile) => ipcRenderer.invoke('user:updateOwnedFiles', { userId, ownedFile }),
   updateUserInfo: (userId, nick, photo) => ipcRenderer.invoke('user:updateInfo', { userId, nick, photo }),
+  updateUserPassword: (userId, currentPassword, newPassword) => ipcRenderer.invoke('user:updatePassword', { userId, currentPassword, newPassword }),
   getAvatarPath: (filename) => ipcRenderer.invoke('avatar:getPath', filename),
   // 分片存储相关API
   uploadLargeFile: (params, totalChunks, updateProgress) => {

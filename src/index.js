@@ -1085,6 +1085,125 @@ function setupIpcHandlers() {
     }
   });
 
+  // 修改密码
+  ipcMain.handle('user:updatePassword', async (event, { userId, currentPassword, newPassword }) => {
+    try {
+      const userUrl = 'https://data.520ai.cc/api/bases/bseloUQsS6clyMZgVMK/tables/AnIpKe3pqF/records';
+      const apiKey = 'PZs9PbId3FAWJkcSqauwQ3pA9Elcxj7LDMW6ddnQ';
+      
+      console.log('====================================');
+      console.log('修改密码 - 参数:');
+      console.log('userId:', userId);
+      console.log('currentPassword:', currentPassword ? '已提供' : '未提供');
+      console.log('newPassword:', newPassword ? '已提供' : '未提供');
+      
+      // 先查询用户当前密码
+      const getUserUrl = `${userUrl}/${userId}`;
+      const getUserResponse = await fetch(getUserUrl, {
+        method: 'GET',
+        headers: {
+          'x-bm-token': apiKey
+        }
+      });
+      
+      console.log('获取用户信息响应状态:', getUserResponse.status, getUserResponse.statusText);
+      
+      if (!getUserResponse.ok) {
+        const errorText = await getUserResponse.text();
+        console.log('获取用户信息失败:', errorText);
+        throw new Error(`获取用户信息失败: ${getUserResponse.status} ${getUserResponse.statusText}`);
+      }
+      
+      const userData = await getUserResponse.json();
+      console.log('用户信息:', userData);
+      
+      // 验证当前密码
+      const storedPassword = userData.password;
+      console.log('存储的密码:', storedPassword);
+      
+      if (storedPassword !== currentPassword) {
+        throw new Error('当前密码不正确');
+      }
+      
+      // 更新密码
+      const updateUrl = `${userUrl}/${userId}`;
+      const updateData = {
+        password: newPassword
+      };
+      
+      console.log('发送的数据:', JSON.stringify(updateData));
+      
+      const updateResponse = await fetch(updateUrl, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-bm-token': apiKey
+        },
+        body: JSON.stringify(updateData)
+      });
+      
+      console.log('更新响应状态:', updateResponse.status, updateResponse.statusText);
+      
+      if (!updateResponse.ok) {
+        const errorText = await updateResponse.text();
+        console.log('更新失败:', errorText);
+        throw new Error(`更新密码失败: ${updateResponse.status} ${updateResponse.statusText}`);
+      }
+      
+      const result = await updateResponse.json();
+      console.log('修改密码成功:', result);
+      console.log('====================================');
+      return result;
+    } catch (error) {
+      console.error('修改密码失败:', error);
+      throw error;
+    }
+  });
+
+  // 更新用户文件列表
+  ipcMain.handle('user:updateOwnedFiles', async (event, { userId, ownedFile }) => {
+    try {
+      const userUrl = 'https://data.520ai.cc/api/bases/bseloUQsS6clyMZgVMK/tables/AnIpKe3pqF/records';
+      const apiKey = 'PZs9PbId3FAWJkcSqauwQ3pA9Elcxj7LDMW6ddnQ';
+      
+      console.log('====================================');
+      console.log('开始更新用户文件列表');
+      console.log('用户ID:', userId);
+      console.log('owned_file:', ownedFile);
+      console.log('API URL:', userUrl);
+      
+      // 构建更新URL
+      const updateUrl = `${userUrl}/${userId}`;
+      console.log('更新URL:', updateUrl);
+      
+      // 发送更新请求
+      const response = await fetch(updateUrl, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-bm-token': apiKey
+        },
+        body: JSON.stringify({ owned_file: ownedFile })
+      });
+      
+      console.log('响应状态:', response.status, response.statusText);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.log('响应内容:', errorText);
+        throw new Error(`更新文件列表失败: ${response.status} ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      console.log('更新文件列表成功:', result);
+      console.log('====================================');
+      return result;
+    } catch (error) {
+      console.error('更新文件列表失败:', error);
+      throw error;
+    }
+  });
+
   // 获取预设头像路径（从photores目录）
   ipcMain.handle('avatar:getPath', async (event, filename) => {
     try {

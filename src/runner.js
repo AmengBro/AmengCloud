@@ -697,6 +697,14 @@ async function showSettingsModal() {
                 <input type="text" id="settingsNickname" class="form-input" placeholder="请输入昵称" value="${nickname}">
             </div>
             
+            <!-- 修改密码按钮 -->
+            <div style="margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border-color);">
+                <button class="btn btn-secondary" id="changePasswordBtn" style="width: 100%;">
+                    <i class="fa-solid fa-key" style="margin-right: 8px;"></i>
+                    修改密码
+                </button>
+            </div>
+            
             <!-- 保存按钮 -->
             <div style="display: flex; gap: 12px; margin-top: 24px;">
                 <button class="btn btn-secondary" id="settingsCancel" style="flex: 1;">
@@ -786,7 +794,7 @@ async function showSettingsModal() {
             const userId = currentUser?.id || currentUser?.Id || currentUser?.record_id;
             console.log('当前用户ID:', userId);
             
-            // 调用后端API更新用户数据（只传文件名或空字符串）
+            // 更新用户基本信息（昵称和头像）
             await window.electronAPI.updateUserInfo(userId, nickname, selectedAvatar);
             
             // 更新当前用户信息
@@ -802,6 +810,101 @@ async function showSettingsModal() {
         } catch (error) {
             console.error('保存设置失败:', error);
             showNotification('保存失败: ' + error.message, 'error');
+        }
+    });
+    
+    // 修改密码按钮
+    document.getElementById('changePasswordBtn').addEventListener('click', () => {
+        closeModal();
+        showChangePasswordModal();
+    });
+}
+
+// 显示修改密码模态框
+function showChangePasswordModal() {
+    const passwordModalOverlay = document.createElement('div');
+    passwordModalOverlay.className = 'modal-overlay active';
+    passwordModalOverlay.style.display = 'flex';
+    
+    const passwordModal = document.createElement('div');
+    passwordModal.className = 'modal';
+    passwordModal.style.maxWidth = '400px';
+    
+    passwordModal.innerHTML = `
+        <div class="modal-header">
+            <h3>修改密码</h3>
+            <button class="modal-close" id="passwordModalClose">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label for="currentPassword">当前密码</label>
+                <input type="password" id="currentPassword" class="form-input" placeholder="请输入当前密码">
+            </div>
+            <div class="form-group">
+                <label for="newPassword">新密码</label>
+                <input type="password" id="newPassword" class="form-input" placeholder="请输入新密码（至少6位）">
+            </div>
+            <div class="form-group">
+                <label for="confirmPassword">确认密码</label>
+                <input type="password" id="confirmPassword" class="form-input" placeholder="请再次输入新密码">
+            </div>
+            
+            <div style="display: flex; gap: 12px; margin-top: 24px;">
+                <button class="btn btn-secondary" id="passwordCancel" style="flex: 1;">
+                    取消
+                </button>
+                <button class="btn btn-primary" id="passwordSave" style="flex: 1;">
+                    确认修改
+                </button>
+            </div>
+        </div>
+    `;
+    
+    passwordModalOverlay.appendChild(passwordModal);
+    document.body.appendChild(passwordModalOverlay);
+    
+    const closeModal = () => {
+        document.body.removeChild(passwordModalOverlay);
+    };
+    
+    document.getElementById('passwordModalClose').addEventListener('click', closeModal);
+    passwordModalOverlay.addEventListener('click', (e) => {
+        if (e.target === passwordModalOverlay) closeModal();
+    });
+    
+    document.getElementById('passwordCancel').addEventListener('click', closeModal);
+    
+    // 确认修改按钮
+    document.getElementById('passwordSave').addEventListener('click', async () => {
+        const currentPassword = document.getElementById('currentPassword').value;
+        const newPassword = document.getElementById('newPassword').value;
+        const confirmPassword = document.getElementById('confirmPassword').value;
+        
+        if (!currentPassword) {
+            showNotification('请输入当前密码', 'error');
+            return;
+        }
+        if (!newPassword || newPassword.length < 6) {
+            showNotification('新密码至少需要6位', 'error');
+            return;
+        }
+        if (newPassword !== confirmPassword) {
+            showNotification('两次输入的密码不一致', 'error');
+            return;
+        }
+        
+        try {
+            const userId = currentUser?.id || currentUser?.Id || currentUser?.record_id;
+            
+            await window.electronAPI.updateUserPassword(userId, currentPassword, newPassword);
+            
+            showNotification('密码修改成功', 'success');
+            closeModal();
+        } catch (error) {
+            console.error('修改密码失败:', error);
+            showNotification('修改失败: ' + error.message, 'error');
         }
     });
 }
@@ -888,6 +991,11 @@ function logout() {
 
         // 确保隐藏加载遮罩
         hideLoading();
+
+        // 重新绑定登录注册事件
+        loginEventsBound = false;
+        registerEventsBound = false;
+        showLoginScreen();
 
         showNotification('已退出登录');
     }
