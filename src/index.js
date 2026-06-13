@@ -1210,19 +1210,54 @@ function setupIpcHandlers() {
       if (!filename || !filename.trim()) {
         return null; // 空值表示默认头像
       }
-      
+
+      // 判断是否为打包后的环境
+      const isPackaged = app.isPackaged;
+
       // 构建头像文件的完整路径
-      const avatarPath = path.join(__dirname, '../photores', filename);
+      let avatarPath;
+      if (isPackaged) {
+        // 打包后：extraResource 会被复制到 resources 目录下
+        avatarPath = path.join(process.resourcesPath, 'photores', filename);
+      } else {
+        // 开发环境：直接从项目根目录的 photores 获取
+        avatarPath = path.join(__dirname, '../photores', filename);
+      }
+
+      console.log('====================================');
       console.log('头像路径:', avatarPath);
-      
+
       // 检查文件是否存在
       if (!fs.existsSync(avatarPath)) {
-        console.warn('头像文件不存在:', avatarPath);
-        return null;
+        // 尝试从应用根目录获取（开发环境可能的另一种路径）
+        const altPath = path.join(path.dirname(__dirname), 'photores', filename);
+        if (fs.existsSync(altPath)) {
+          avatarPath = altPath;
+        } else {
+          console.warn('头像文件不存在:', avatarPath);
+          return null;
+        }
+      }
+
+      // 返回 file:// 协议路径，供前端使用
+      // 处理 Windows 和 Linux 路径，并对特殊字符进行编码
+      let normalizedPath;
+      let fileUrl;
+      
+      if (process.platform === 'win32') {
+        // Windows: file:///C:/path/to/file.png
+        normalizedPath = avatarPath.replace(/\\/g, '/');
+        fileUrl = 'file:///' + encodeURI(normalizedPath);
+      } else {
+        // Linux/macOS: file:///path/to/file.png
+        // Linux 路径已经是 /home/... 格式，只需要 file:// 前缀
+        // 注意：不要加第三个斜杠，因为路径本身以 / 开头
+        // file:// + /home/... = file:///home/... (正确)
+        normalizedPath = avatarPath;
+        fileUrl = 'file://' + encodeURI(normalizedPath);
       }
       
-      // 返回 file:// 协议路径，供前端使用
-      return 'file:///' + avatarPath.replace(/\\/g, '/');
+      return fileUrl;
     } catch (error) {
       console.error('获取头像路径失败:', error);
       return null;
