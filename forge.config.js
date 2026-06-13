@@ -47,6 +47,17 @@ module.exports = {
         }
       },
     },
+    {
+      name: '@electron-forge/maker-appimage',
+      config: {
+        options: {
+          name: 'amengcloud',
+          productName: 'AmengCloud',
+          icon: './icon.png',
+          description: '一个高效的云端文件管理应用',
+        }
+      },
+    },
   ],
   plugins: [
     {
